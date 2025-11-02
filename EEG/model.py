@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import warnings
+import pickle
 
 # --- 1. Standard Library Imports ---
 print("Loading libraries (sklearn, pandas, numpy, matplotlib)...")
@@ -59,6 +60,8 @@ def load_and_preprocess_data(dataset_path):
     if mode is None:
         print(f"Error: No *features.csv or *data.csv files found in {dataset_path}.")
         return None
+        
+    imputer = None  # <-- **FIX 1**: Initialize imputer to None
     
     try:
         df_train = pd.read_csv(train_file)
@@ -90,7 +93,7 @@ def load_and_preprocess_data(dataset_path):
         # Impute missing values (even in feature files, just in case)
         if X_train_raw.isnull().sum().sum() > 0 or X_test_raw.isnull().sum().sum() > 0:
             print("Imputing missing values (mean strategy)...")
-            imputer = SimpleImputer(strategy='mean')
+            imputer = SimpleImputer(strategy='mean') # <-- **FIX 2**: Assign to imputer var
             X_train_imputed = imputer.fit_transform(X_train_raw)
             X_test_imputed = imputer.transform(X_test_raw)
         else:
@@ -109,7 +112,8 @@ def load_and_preprocess_data(dataset_path):
             "X_train": X_train, "y_train": y_train,
             "X_test": X_test, "y_test": y_test,
             "n_classes": n_classes, "feature_names": feature_names,
-            "label_encoder": le
+            "label_encoder": le,
+            "imputer": imputer  # <-- **FIX 3**: Return the imputer in the dictionary
         }
     except Exception as e:
         print(f"Error processing data in {dataset_path}: {e}")
@@ -204,4 +208,32 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Error plotting ROC curve: {e}")
 
+    # --- 4. Save Model & Pipeline ---
+    
+    print("\n--- 4. Saving Model & Pipeline ---")
+    
+    # Retrieve the imputer (it will be None if no imputation was done)
+    imputer = data['imputer'] # <-- This will now work correctly
+    
+    # Bundle all necessary components into a dictionary
+    pipeline_components = {
+        'model': model,
+        'label_encoder': le,
+        'imputer': imputer,
+        'feature_names': data['feature_names'], # Save feature names for prediction
+        'class_names': list(class_names)
+    }
+    
+    # Define the output filename
+    output_filename = "rf_eeg_pipeline.pkl"
+    
+    try:
+        with open(output_filename, 'wb') as f:
+            pickle.dump(pipeline_components, f)
+        print(f"✅ Successfully saved pipeline components to '{output_filename}'")
+    except Exception as e:
+        print(f"--- 🛑 ERROR SAVING MODEL ---")
+        print(f"An error occurred: {e}")
+
+    # --- This print statement was already here ---
     print(f"\n{'='*25} 🏁 Analysis Complete 🏁 {'='*25}")

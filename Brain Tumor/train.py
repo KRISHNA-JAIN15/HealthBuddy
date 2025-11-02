@@ -4,6 +4,7 @@ import sys
 import numpy as np
 import pandas as pd
 import warnings
+import pickle  
 from tqdm import tqdm # Added for a nice progress bar
 
 # --- Sklearn/Skimage Imports ---
@@ -192,8 +193,40 @@ else:
     print("\n--- Evaluation Complete ---")
     
     accuracy = accuracy_score(y_test, y_pred)
+    # --- 8. Evaluate ---
+    print("\n--- Evaluation Complete ---")
+    
+    accuracy = accuracy_score(y_test, y_pred)
     print(f"Accuracy: {accuracy:.4f}")
 
     print("\nClassification Report:\n")
     # Use target_names from the LabelEncoder to show full class names
     print(classification_report(y_test, y_pred, target_names=le.classes_))
+
+    
+    # --- 9. Save the Model and Preprocessors ---
+    
+    print("\n--- Saving Model & Pipeline ---")
+    
+    # Bundle all necessary components into a dictionary
+    # This is crucial, as you need the scaler and PCA to process new images
+    pipeline_components = {
+        'model': model,
+        'label_encoder': le,
+        'scaler': scaler,
+        'pca': pca,
+        'class_names': list(le.classes_) # Save class names for convenience
+    }
+    
+    # Define the output filename
+    output_filename = "knn_pipeline.pkl"
+    
+    try:
+        with open(output_filename, 'wb') as f:
+            pickle.dump(pipeline_components, f)
+        print(f"✅ Successfully saved pipeline components to '{output_filename}'")
+    except Exception as e:
+        print(f"--- 🛑 ERROR SAVING MODEL ---")
+        print(f"An error occurred: {e}")
+
+# This should be the end of the 'else' blockconda
