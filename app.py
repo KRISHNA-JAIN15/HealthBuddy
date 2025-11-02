@@ -101,9 +101,52 @@ def load_heart_attack_model():
         return None
     
 
+#Maternal Health Predictor
+
+@st.cache_resource
+def load_maternal_health_model():
+    model_path = os.path.join('MentalHealth', 'maternal_health_randomforest.pkl')
+    
+    original_rf_module = sys.modules.get('RandomForest')
+
+    try:
+        from Classifier_codes import DecisionTree
+        from Classifier_codes import RandomForest as ClassifierRandomForest
+
+        sys.modules['DecisionTree'] = DecisionTree
+        sys.modules['RandomForest'] = ClassifierRandomForest
+
+        with open(model_path, 'rb') as file:
+            maternal_model = pickle.load(file)
+
+        print("Maternal Health model loaded successfully")
+
+
+        if original_rf_module:
+            sys.modules['RandomForest'] = original_rf_module
+        else:
+            del sys.modules['RandomForest']
+        del sys.modules['DecisionTree']
+        return maternal_model
+    except FileNotFoundError:
+        st.error(f"❌ ERROR: The file '{model_path}' was not found.")
+        return None
+    except ImportError as e:
+        st.error(f"❌ IMPORT ERROR: {e}")
+        return None
+    except Exception as e:
+        st.error(f"❌ An error occurred while loading the file: {e}")
+        return None
+         
+        
+
+
+      
+
+
 model, scaler, feature_names = load_body_fat_model()
 heart_model_pipeline = load_heart_attack_model()      
-
+maternal_model_pipeline = load_maternal_health_model()
 
 
 
@@ -418,6 +461,7 @@ with st.sidebar:
             "🏠 Home",
             "❤️ Heart Attack Predictor",
             "💪 Body Fat Predictor",
+            "🤰 Maternal Health Predictor",
             "🩸 Diabetes Predictor",
             "🩺 Liver Disease Predictor",
             "🔬 Kidney Disease Predictor",
@@ -499,7 +543,7 @@ if app_mode == "🏠 Home":
 
 
 # --- HEART ATTACK PREDICTOR PAGE ---
-# --- HEART ATTACK PREDICTOR PAGE ---
+
 elif app_mode == "❤️ Heart Attack Predictor":
     st.markdown("# ❤️ Heart Attack Risk Predictor")
     st.markdown("Our **Custom Random Forest** model will evaluate your risk based on 8 clinical health metrics.")
@@ -705,6 +749,126 @@ elif app_mode == "💪 Body Fat Predictor":
                 except Exception as e:
                     st.error(f"❌ An error occurred during prediction: {e}")
 
+# --- MATERNAL HEALTH PREDICTOR PAGE ---
+elif app_mode == "🤰 Maternal Health Predictor":
+    st.markdown("# 🤰 Maternal Health Risk Predictor")
+    st.markdown("Our **Custom Random Forest** model will evaluate your risk based on 6 key vital signs.")
+
+    with st.form("maternal_health_form"):
+        st.markdown("### 👤 Patient Vitals")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            age = st.number_input("Age (years)", min_value=10, max_value=70, value=25)
+        with col2:
+            systolic_bp = st.number_input("Systolic BP (mm Hg)", min_value=70, max_value=200, value=130)
+        with col3:
+            diastolic_bp = st.number_input("Diastolic BP (mm Hg)", min_value=40, max_value=120, value=80)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            bs = st.number_input("Blood Sugar (BS) (mmol/L)", min_value=3.0, max_value=20.0, value=15.0, step=0.1, format="%.1f")
+        with col2:
+            body_temp_f = st.number_input("Body Temp (°F)", min_value=95.0, max_value=105.0, value=98.0, step=0.1, format="%.1f")
+        with col3:
+            heart_rate = st.number_input("Heart Rate (bpm)", min_value=50, max_value=120, value=86)
+
+        st.markdown("---")
+        submitted = st.form_submit_button("🩺 Analyze My Risk")
+
+    if submitted:
+        # Check if the model is loaded
+        if maternal_model_pipeline is None:
+            st.error("❌ **Model Error:** The Maternal Health prediction model is not loaded. Please check the server logs.")
+        else:
+            try:
+                # 1. Create a dictionary of all 6 inputs
+                input_data = {
+                    'Age': age,
+                    'SystolicBP': systolic_bp,
+                    'DiastolicBP': diastolic_bp,
+                    'BS': bs,
+                    'BodyTemp': body_temp_f, # Your model was trained on 'BodyTemp'
+                    'HeartRate': heart_rate
+                }
+                
+                # 2. Convert to DataFrame
+                # The column order MUST match the training script:
+                feature_order = ['Age', 'SystolicBP', 'DiastolicBP', 'BS', 'BodyTemp', 'HeartRate']
+                input_df = pd.DataFrame([input_data], columns=feature_order)
+
+                # 3. Make prediction
+                # The saved object is a full pipeline (model + preprocessor)
+                prediction_encoded = maternal_model_pipeline.predict(input_df)
+                
+                # Get the single encoded label (0, 1, or 2)
+                encoded_label = prediction_encoded[0]
+                
+                # 4. Map to class names
+                # Must match the order from your training script
+                class_names = ['high risk', 'low risk', 'mid risk']
+                prediction_label = class_names[encoded_label]
+                
+                # --- [END] NEW PREDICTION LOGIC ---
+
+                st.markdown("### 📋 Analysis Results")
+                
+                if prediction_label == 'high risk':
+                    st.error(
+                        f"**⚠️ HIGH RISK DETECTED**",
+                        icon="🚨"
+                    )
+                    st.warning(
+                        """
+                        **Immediate Action Required:**
+                        
+                        This prediction indicates a high-risk profile. Please consult a healthcare provider **immediately** for a proper evaluation.
+                        """
+                    )
+                elif prediction_label == 'mid risk':
+                    st.warning(
+                        f"**🟡 MID RISK DETECTED**",
+                        icon="⚠️"
+                    )
+                    st.info(
+                        """
+                        **Recommendation:**
+                        
+                        Your results suggest a moderate-risk profile. It is strongly recommended to schedule a consultation with your healthcare provider for further monitoring.
+                        """
+                    )
+                else: # 'low risk'
+                    st.success(
+                        f"**✅ LOW RISK DETECTED**",
+                        icon="💚"
+                    )
+                    st.info(
+                        """
+                        **Recommendation:**
+                        
+                        Your results suggest a low-risk profile. Continue to maintain regular health check-ups and consult your provider with any questions.
+                        """
+                        )
+            
+            except Exception as e:
+                st.error(f"❌ An error occurred during prediction: {e}")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # --- PLACEHOLDER PAGES ---
 elif app_mode == "🩸 Diabetes Predictor":
     st.markdown("# 🩸 Diabetes Risk Predictor")
@@ -722,6 +886,3 @@ elif app_mode == "🧠 Stroke Predictor":
     st.markdown("# 🧠 Stroke Risk Predictor")
     st.info("🛠️ **Feature Coming Soon!** Neurological risk assessment powered by AI.", icon="⚡")
 
-elif app_mode == "🎀 Breast Cancer Predictor":
-    st.markdown("# 🎀 Breast Cancer Risk Predictor")
-    st.info("🛠️ **Feature Coming Soon!** Advanced oncological screening tool under development.", icon="⚡")
