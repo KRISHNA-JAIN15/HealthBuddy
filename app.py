@@ -15,8 +15,13 @@ if PROJECT_ROOT not in sys.path:
 bodyfat_path = os.path.join(PROJECT_ROOT, 'BodyFat')
 if bodyfat_path not in sys.path:
     sys.path.append(bodyfat_path)
+# Add Classifier_codes directory to path for pickle imports
+classifier_codes_path = os.path.join(PROJECT_ROOT, 'Classifier_codes')
+if classifier_codes_path not in sys.path:
+    sys.path.append(classifier_codes_path)
 
-from BodyFat.RandomForest import RandomForestRegressor, DecisionTreeRegressor, Node
+
+from BodyFat.RandomForest import RandomForestRegressor, DecisionTreeRegressor, Node as BodyFatNode
 # Ensure pickle can find the module
 sys.modules['RandomForest'] = sys.modules['BodyFat.RandomForest']
 
@@ -50,7 +55,58 @@ def load_body_fat_model():
     except Exception as e:
         st.error(f"❌ An error occurred while loading the file: {e}")
         return None, None, None
+
+
+
+
+
+
+# Heart Attack Predictor model loading function
+@st.cache_resource
+def load_heart_attack_model():
+    model_path = os.path.join('HeartAttack', 'heart_attack_rf_model.pkl')
+    
+
+    original_rf_module = sys.modules.get('RandomForest')
+    try:
+        from Classifier_codes import DecisionTree
+        from Classifier_codes import RandomForest as ClassifierRandomForest
+
+        sys.modules['DecisionTree'] = DecisionTree
+        sys.modules['RandomForest'] = ClassifierRandomForest
+
+        with open(model_path, 'rb') as file:
+            heart_pipeline = pickle.load(file)
+
+        print("Heart Attack model loaded successfully")
+
+
+        if original_rf_module:
+            sys.modules['RandomForest'] = original_rf_module
+        else:
+            del sys.modules['RandomForest']
+        
+        del sys.modules['DecisionTree']
+
+        return heart_pipeline
+    
+    except FileNotFoundError:
+        st.error(f"❌ ERROR: The file '{model_path}' was not found.")
+        return None
+    except ImportError as e:
+        st.error(f"❌ IMPORT ERROR: {e}")
+        return None
+    except Exception as e:
+        st.error(f"❌ An error occurred while loading the file: {e}")
+        return None
+    
+
 model, scaler, feature_names = load_body_fat_model()
+heart_model_pipeline = load_heart_attack_model()      
+
+
+
+
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -443,98 +499,110 @@ if app_mode == "🏠 Home":
 
 
 # --- HEART ATTACK PREDICTOR PAGE ---
+# --- HEART ATTACK PREDICTOR PAGE ---
 elif app_mode == "❤️ Heart Attack Predictor":
     st.markdown("# ❤️ Heart Attack Risk Predictor")
-    st.markdown("Our **Random Forest** model (top performer for cardiovascular analysis) will evaluate your risk based on comprehensive health metrics.")
+    st.markdown("Our **Custom Random Forest** model will evaluate your risk based on 8 clinical health metrics.")
 
     with st.form("heart_attack_form"):
         st.markdown("### 👤 Patient Demographics")
-        
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
-            age = st.number_input("Age (years)", min_value=1, max_value=120, value=52)
+            age = st.number_input("Age (years)", min_value=1, max_value=120, value=50)
         with col2:
-            sex = st.selectbox("Biological Sex", ("Male", "Female"))
-        with col3:
-            cp = st.selectbox(
-                "Chest Pain Type", 
-                (0, 1, 2, 3), 
-                help="0: Typical angina | 1: Atypical angina | 2: Non-anginal | 3: Asymptomatic"
-            )
+            # Your model was trained on 'Gender' which is likely 1 for Male, 0 for Female
+            gender = st.selectbox("Gender", (1, 0), format_func=lambda x: "Male" if x == 1 else "Female")
 
         st.markdown("### 🔬 Clinical Measurements")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
-            trestbps = st.number_input("Resting Blood Pressure (mm Hg)", min_value=80, max_value=200, value=120)
+            heart_rate = st.number_input("Heart Rate (bpm)", min_value=40, max_value=220, value=75, help="Average beats per minute.")
         with col2:
-            chol = st.number_input("Serum Cholesterol (mg/dl)", min_value=100, max_value=600, value=210)
-        with col3:
-            fbs = st.selectbox("Fasting Blood Sugar > 120 mg/dl", ("No", "Yes"))
+            blood_sugar = st.number_input("Blood Sugar (mg/dL)", min_value=50.0, max_value=500.0, value=100.0, step=0.1, help="Fasting blood glucose level.")
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2 = st.columns(2)
         with col1:
-            restecg = st.selectbox(
-                "Resting ECG Results",
-                (0, 1, 2),
-                help="0: Normal | 1: ST-T wave abnormality | 2: Left ventricular hypertrophy"
-            )
+            systolic_bp = st.number_input("Systolic Blood Pressure (mm Hg)", min_value=80, max_value=250, value=120, help="The 'top' number.")
         with col2:
-            thalach = st.number_input("Max Heart Rate Achieved", min_value=60, max_value=220, value=150)
-        with col3:
-            exang = st.selectbox("Exercise Induced Angina", ("No", "Yes"))
+            diastolic_bp = st.number_input("Diastolic Blood Pressure (mm Hg)", min_value=40, max_value=150, value=80, help="The 'bottom' number.")
         
-        col1, col2, col3 = st.columns(3)
+        st.markdown("### 🧬 Cardiac Enzyme Markers")
+        col1, col2 = st.columns(2)
         with col1:
-            oldpeak = st.number_input("ST Depression (oldpeak)", min_value=0.0, max_value=10.0, value=0.0, step=0.1, format="%.1f")
+            ck_mb = st.number_input("CK-MB (ng/mL)", min_value=0.0, max_value=100.0, value=3.0, step=0.1, help="Creatine kinase-MB enzyme level.")
         with col2:
-            slope = st.selectbox(
-                "Slope of Peak Exercise ST",
-                (0, 1, 2),
-                help="0: Upsloping | 1: Flat | 2: Downsloping"
-            )
-        with col3:
-            ca = st.selectbox("Number of Major Vessels (0-3)", (0, 1, 2, 3))
+            troponin = st.number_input("Troponin (ng/mL)", min_value=0.0, max_value=10.0, value=0.02, step=0.01, format="%.2f", help="Troponin enzyme level.")
 
         st.markdown("---")
         
         submitted = st.form_submit_button("🩺 Analyze My Risk")
 
     if submitted:
-        import random
-        prediction_proba = random.random()
-        
-        st.markdown("### 📋 Analysis Results")
-        
-        if prediction_proba > 0.5:
-            st.error(
-                f"**⚠️ HIGH RISK DETECTED**\n\nProbability of Heart Attack: **{prediction_proba*100:.1f}%**",
-                icon="🚨"
-            )
-            st.warning(
-                """
-                **Immediate Action Required:**
-                
-                This prediction indicates elevated risk. Please consult a cardiologist or healthcare provider **immediately** for proper evaluation and diagnosis.
-                
-                This is an AI-generated assessment and should not be considered a medical diagnosis.
-                """
-            )
+        # Check if the model is loaded
+        if heart_model_pipeline is None:
+            st.error("❌ **Model Error:** The Heart Attack prediction model is not loaded. Please check the server logs.")
         else:
-            st.success(
-                f"**✅ LOW RISK DETECTED**\n\nProbability of Heart Attack: **{prediction_proba*100:.1f}%**",
-                icon="💚"
-            )
-            st.info(
-                """
-                **Recommendation:**
+            try:
+                # 1. Create a dictionary of all 8 inputs
+                input_data = {
+                    'Age': age,
+                    'Gender': gender,
+                    'Heart rate': heart_rate,
+                    'Systolic blood pressure': systolic_bp,
+                    'Diastolic blood pressure': diastolic_bp,
+                    'Blood sugar': blood_sugar,
+                    'CK-MB': ck_mb,
+                    'Troponin': troponin
+                }
                 
-                Your results suggest lower risk, but maintaining regular health check-ups is essential. Continue healthy lifestyle habits and consult your healthcare provider for personalized advice.
-                
-                This is an AI-generated assessment for informational purposes only.
-                """
-            )
+                # 2. Convert to DataFrame
+                # The column order MUST match the training script:
+                feature_order = ['Age', 'Gender', 'Heart rate', 'Systolic blood pressure', 
+                                 'Diastolic blood pressure', 'Blood sugar', 'CK-MB', 'Troponin']
+                input_df = pd.DataFrame([input_data], columns=feature_order)
 
+                # 3. Make prediction
+                # The saved object is a full pipeline, so it handles scaling/imputing
+                # Since the custom model doesn't have predict_proba, use predict and assume binary
+                prediction = heart_model_pipeline.predict(input_df)[0]
+                prediction_proba = 1.0 if prediction == 1 else 0.0
+                
+                # --- [END] NEW PREDICTION LOGIC ---
+
+                st.markdown("### 📋 Analysis Results")
+                
+                if prediction_proba > 0.5: # 50% threshold
+                    st.error(
+                        f"**⚠️ HIGH RISK DETECTED**\n\nProbability of Heart Attack: **{prediction_proba*100:.1f}%**",
+                        icon="🚨"
+                    )
+                    st.warning(
+                        """
+                        **Immediate Action Required:**
+                        
+                        This prediction indicates elevated risk. Please consult a cardiologist or healthcare provider **immediately** for proper evaluation and diagnosis.
+                        
+                        This is an AI-generated assessment and should not be considered a medical diagnosis.
+                        """
+                    )
+                else:
+                    st.success(
+                        f"**✅ LOW RISK DETECTED**\n\nProbability of Heart Attack: **{prediction_proba*100:.1f}%**",
+                        icon="💚"
+                    )
+                    st.info(
+                        """
+                        **Recommendation:**
+                        
+                        Your results suggest lower risk, but maintaining regular health check-ups is essential. Continue healthy lifestyle habits and consult your healthcare provider for personalized advice.
+                        
+                        This is an AI-generated assessment for informational purposes only.
+                        """
+                    )
+            
+            except Exception as e:
+                st.error(f"❌ An error occurred during prediction: {e}")
 
 
 elif app_mode == "💪 Body Fat Predictor":
