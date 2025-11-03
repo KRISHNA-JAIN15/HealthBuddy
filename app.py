@@ -204,7 +204,83 @@ def load_diabetes_model():
     except Exception as e:
         st.error(f"❌ An error occurred while loading the Diabetes model: {e}")
         return None
+# Brain Tumor
 
+
+@st.cache_data
+def extract_hog(img):
+    hog_features, _ = hog(img, orientations=9, pixels_per_cell=(8, 8),
+                          cells_per_block=(2, 2), block_norm='L2-Hys',
+                          visualize=True, transform_sqrt=True)
+    return hog_features
+
+@st.cache_data
+def extract_glcm_features(img):
+    glcm = graycomatrix(img, distances=[5], angles=[0], levels=256, symmetric=True, normed=True)
+    features = [
+        graycoprops(glcm, 'contrast')[0, 0],
+        graycoprops(glcm, 'dissimilarity')[0, 0],
+        graycoprops(glcm, 'homogeneity')[0, 0],
+        graycoprops(glcm, 'energy')[0, 0],
+        graycoprops(glcm, 'correlation')[0, 0]
+    ]
+    return features
+
+@st.cache_data
+def extract_lbp_features(img):
+    lbp = local_binary_pattern(img, P=8, R=1, method='uniform')
+    (hist, _) = np.histogram(lbp.ravel(),
+                             bins=np.arange(0, 10),
+                             range=(0, 9))
+    hist = hist.astype("float")
+    hist /= (hist.sum() + 1e-6)
+    return hist
+
+@st.cache_data
+def extract_statistical_features(img):
+    mean = np.mean(img)
+    var = np.var(img)
+    skew = np.mean((img - mean)**3) / (np.std(img)**3 + 1e-6)
+    kurt = np.mean((img - mean)**4) / (np.std(img)**4 + 1e-6)
+    entropy = -np.sum((img/255) * np.log2(img/255 + 1e-6))
+    return [mean, var, skew, kurt, entropy]
+
+def extract_features_from_image(img_path):
+    """Main preprocessing function for a single image."""
+    img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        print(f"Error: Could not read image {img_path}.")
+        return None
+    
+    img = cv2.resize(img, (128, 128))
+
+    hog_f = extract_hog(img)
+    glcm_f = extract_glcm_features(img)
+    lbp_f = extract_lbp_features(img)
+    stat_f = extract_statistical_features(img)
+
+    combined = np.hstack([hog_f, glcm_f, lbp_f, stat_f])
+    return combined
+
+@st.cache_resource
+def load_brain_tumor_model():
+    model_path = os.path.join('Brain Tumor', 'knn_pipeline.pkl')
+    try:
+        with open(model_path, 'rb') as f:
+            pipeline = pickle.load(f)
+        
+        # Unpack the dictionary
+        bt_model = pipeline['model']
+        bt_le = pipeline['label_encoder']
+        bt_scaler = pipeline['scaler']
+        bt_pca = pipeline['pca']
+        bt_class_names = pipeline['class_names']
+        
+        print("Brain Tumor (KNN) pipeline loaded successfully")
+        return bt_model, bt_le, bt_scaler, bt_pca, bt_class_names
+    except Exception as e:
+        st.error(f"❌ An error occurred while loading the Brain Tumor model: {e}")
+        return None, None, None, None, None
 
 model, scaler, feature_names = load_body_fat_model()
 heart_model_pipeline = load_heart_attack_model()      
@@ -213,7 +289,7 @@ obesity_model = obesity_model_loader()
 gallstone_model = gallstone_model_loader()
 kidney_model_pipeline = load_kidney_disease_model()
 diabetes_model_pipeline = load_diabetes_model()
-
+bt_model, bt_le, bt_scaler, bt_pca, bt_class_names = load_brain_tumor_model()
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Health Buddy",
@@ -529,7 +605,7 @@ with st.sidebar:
             "🪨 GallStone Predictor",
             "🩸 Diabetes Predictor",
             "🔬 Kidney Disease Predictor",
-            "🧠 Stroke Predictor",
+            "🧠 Brain Tumor Predictor",
             "🎀 Breast Cancer Predictor",
         ],
         label_visibility="collapsed"
@@ -1523,7 +1599,72 @@ elif app_mode == "🔬 Kidney Disease Predictor":
             except Exception as e:
                 st.error(f"❌ An error occurred during prediction: {e}")
 
-elif app_mode == "🧠 Stroke Predictor":
-    st.markdown("# 🧠 Stroke Risk Predictor")
-    st.info("🛠️ **Feature Coming Soon!** Neurological risk assessment powered by AI.", icon="⚡")
+# --- BRAIN TUMOR PREDICTOR PAGE ---
+elif app_mode == "🧠 Brain Tumor Predictor":
+    st.markdown("# 🧠 Brain Tumor Predictor (MRI)")
+    st.markdown("Our **Custom KNN** model will analyze a brain MRI scan to classify the tumor type.")
+    st.info("This model uses advanced feature extraction (HOG, GLCM, LBP) on the image provided.")
+    
+    # 1. Create the file uploader
+    uploaded_file = st.file_uploader(
+        "Upload a Brain MRI (jpg, png, bmp)...", 
+        type=["jpg", "png", "jpeg", "bmp"]
+    )
+    
+    temp_image_path = None
+    
+    if uploaded_file is not None:
+        # 2. Display the uploaded image
+        st.image(uploaded_file, caption="Uploaded MRI Scan.", use_column_width=True)
+        
+        # 3. Create a temporary file to save the image
+        # This is necessary because extract_features_from_image expects a file path
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(uploaded_file.name)[1]) as tmp:
+            tmp.write(uploaded_file.getvalue())
+            temp_image_path = tmp.name
+        
+        # 4. Create the prediction button
+        if st.button("🧠 Analyze MRI Scan", use_container_width=True):
+            # Check if all models loaded
+            if not all([bt_model, bt_le, bt_scaler, bt_pca]):
+                st.error("❌ **Model Error:** The Brain Tumor prediction pipeline is not fully loaded. Check server logs.")
+            else:
+                try:
+                    with st.spinner("Analyzing image and extracting features..."):
+                        # 5. Run the full extraction and prediction pipeline
+                        
+                        # 5a. Extract features from the temp file path
+                        features = extract_features_from_image(temp_image_path)
+                        
+                        if features is not None:
+                            # 5b. Reshape features
+                            features_2d = features.reshape(1, -1)
+                            
+                            # 5c. Apply scaler
+                            scaled_features = bt_scaler.transform(features_2d)
+                            
+                            # 5d. Apply PCA
+                            pca_features = bt_pca.transform(scaled_features)
+                            
+                            # 5e. Predict
+                            prediction_index = bt_model.predict(pca_features)[0]
+                            
+                            # 5f. Decode the result
+                            prediction_name = bt_le.inverse_transform([prediction_index])[0]
+                            
+                            # --- [END] NEW PREDICTION LOGIC ---
+                            
+                            st.markdown("### 📋 Analysis Results")
+                            st.success(f"**Prediction: {prediction_name}**")
+                            st.info(f"The model has classified the MRI scan as **{prediction_name}**.")
+                        
+                        else:
+                            st.error("Could not read or process the uploaded image.")
 
+                except Exception as e:
+                    st.error(f"❌ An error occurred during prediction: {e}")
+                
+                finally:
+                    # 7. Clean up (delete) the temporary file
+                    if temp_image_path and os.path.exists(temp_image_path):
+                        os.remove(temp_image_path)
