@@ -140,6 +140,27 @@ def load_maternal_health_model():
          
         
 
+@st.cache_resource
+def obesity_model_loader():
+    model_path = os.path.join('ObesityLevel', 'decision_tree_model.pkl')
+    try:
+        # Monkey patch for sklearn compatibility issue
+        import sklearn.compose._column_transformer
+        if not hasattr(sklearn.compose._column_transformer, '_RemainderColsList'):
+            class _RemainderColsList:
+                pass
+            sklearn.compose._column_transformer._RemainderColsList = _RemainderColsList
+        
+        with open(model_path, 'rb') as file:
+            obesity_model = pickle.load(file)
+        print("Obesity model loaded successfully")
+        return obesity_model
+    except FileNotFoundError:
+        st.error(f"❌ ERROR: The file '{model_path}' was not found.")
+        return None
+    except Exception as e:
+        st.error(f"❌ An error occurred while loading the file: {e}")
+        return None
 
       
 
@@ -147,6 +168,7 @@ def load_maternal_health_model():
 model, scaler, feature_names = load_body_fat_model()
 heart_model_pipeline = load_heart_attack_model()      
 maternal_model_pipeline = load_maternal_health_model()
+obesity_model = obesity_model_loader()
 
 
 
@@ -462,6 +484,7 @@ with st.sidebar:
             "❤️ Heart Attack Predictor",
             "💪 Body Fat Predictor",
             "🤰 Maternal Health Predictor",
+            "⚖️ Obesity Level Predictor",
             "🩸 Diabetes Predictor",
             "🩺 Liver Disease Predictor",
             "🔬 Kidney Disease Predictor",
@@ -858,7 +881,133 @@ elif app_mode == "🤰 Maternal Health Predictor":
 
 
 
+# --- OBESITY LEVEL PREDICTOR PAGE ---
+elif app_mode == "⚖️ Obesity Level Predictor":
+    st.markdown("# ⚖️ Obesity Level Predictor")
+    st.markdown("Our **Custom Decision Tree** model will analyze 16 lifestyle and physical metrics to predict your weight category.")
 
+    # These are the 16 features your model was trained on
+    COLUMN_ORDER = [
+        'Gender', 'Age', 'Height', 'Weight', 'family_history_with_overweight',
+        'FAVC', 'FCVC', 'NCP', 'CAEC', 'SMOKE', 'CH2O', 'SCC', 'FAF', 'TUE',
+        'CALC', 'MTRANS'
+    ]
+    BINARY_FEATURES = ['family_history_with_overweight', 'FAVC', 'SMOKE', 'SCC']
+    CLASS_NAMES = [
+        'Insufficient_Weight', 'Normal_Weight', 'Obesity_Type_I', 
+        'Obesity_Type_II', 'Obesity_Type_III', 'Overweight_Level_I', 
+        'Overweight_Level_II'
+    ]
+
+    with st.form("obesity_form"):
+        st.markdown("### 👤 Patient Demographics")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            Age = st.number_input("Age", min_value=1.0, max_value=100.0, value=25.0, step=1.0)
+        with col2:
+            Gender = st.selectbox("Gender", ('Male', 'Female'))
+        with col3:
+            family_history_with_overweight = st.selectbox("Family History of Overweight?", ('yes', 'no'))
+
+        col1, col2 = st.columns(2)
+        with col1:
+            Height = st.number_input("Height (meters)", min_value=1.0, max_value=2.5, value=1.75, step=0.01, format="%.2f")
+        with col2:
+            Weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=80.0, step=0.1, format="%.1f")
+
+        st.markdown("### 🍔 Dietary Habits")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            FAVC = st.selectbox("Frequent High Caloric Food?", ('yes', 'no'), help="Do you frequently eat high caloric food?")
+        with col2:
+            FCVC = st.slider("Vegetable Consumption", 1.0, 3.0, 2.0, 1.0, help="1=Never, 2=Sometimes, 3=Always")
+        with col3:
+            NCP = st.slider("Number of Main Meals", 1.0, 4.0, 3.0, 1.0, help="Number of main meals per day")
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            CAEC = st.selectbox("Food Between Meals", ('No', 'Sometimes', 'Frequently', 'Always'))
+        with col2:
+            CALC = st.selectbox("Alcohol Consumption", ('no', 'Sometimes', 'Frequently', 'Always'))
+        with col3:
+            CH2O = st.slider("Water Consumption (Liters)", 1.0, 3.0, 2.0, 0.5, help="Liters of water per day")
+
+        st.markdown("### 🏃 Lifestyle & Activity")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            SMOKE = st.selectbox("Do you smoke?", ('yes', 'no'))
+        with col2:
+            SCC = st.selectbox("Monitor Calorie Intake?", ('yes', 'no'), help="Do you monitor calories?")
+        with col3:
+            FAF = st.slider("Physical Activity Frequency", 0.0, 3.0, 1.0, 0.5, help="Days per week. 0=None, 3=Often")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            TUE = st.slider("Time Using Tech Devices", 0.0, 2.0, 1.0, 0.5, help="0=0-2h, 1=3-5h, 2=>5h")
+        with col2:
+            MTRANS = st.selectbox("Primary Transportation", ('Automobile', 'Motorbike', 'Bike', 'Public_Transportation', 'Walking'))
+        
+        st.markdown("---")
+        submitted = st.form_submit_button("⚖️ Calculate Obesity Level")
+
+    if submitted:
+        if obesity_model is None:
+            st.error("❌ **Model Error:** The Obesity prediction model is not loaded. Please check the server logs.")
+        else:
+            try:
+                # 1. Create a dictionary of all 16 inputs
+                input_data = {
+                    'Gender': Gender, 'Age': Age, 'Height': Height, 'Weight': Weight, 
+                    'family_history_with_overweight': family_history_with_overweight,
+                    'FAVC': FAVC, 'FCVC': FCVC, 'NCP': NCP, 'CAEC': CAEC, 'SMOKE': SMOKE, 
+                    'CH2O': CH2O, 'SCC': SCC, 'FAF': FAF, 'TUE': TUE, 'CALC': CALC, 'MTRANS': MTRANS
+                }
+                
+                # 2. Convert to DataFrame with correct column order
+                input_df = pd.DataFrame([input_data], columns=COLUMN_ORDER)
+
+                # --- [CRITICAL PREDICTION FIX] ---
+                # The pipeline expects 1/0 for binary features, not 'yes'/'no'
+                for col in BINARY_FEATURES:
+                    if input_df[col].dtype == 'object':
+                        input_df[col] = input_df[col].map({'yes': 1, 'no': 0})
+                # --- [END OF FIX] ---
+
+                # 3. Make prediction
+                prediction_encoded = obesity_model.predict(input_df)
+                
+                # 4. Map to class names
+                prediction_label = CLASS_NAMES[prediction_encoded[0]]
+                
+                # --- [END] NEW PREDICTION LOGIC ---
+
+                st.markdown("### 📋 Analysis Results")
+                
+                if "Obesity" in prediction_label:
+                    st.error(
+                        f"**Prediction: {prediction_label.replace('_', ' ')}**",
+                        icon="🚨"
+                    )
+                elif "Overweight" in prediction_label:
+                    st.warning(
+                        f"**Prediction: {prediction_label.replace('_', ' ')}**",
+                        icon="⚠️"
+                    )
+                elif "Normal" in prediction_label:
+                    st.success(
+                        f"**Prediction: {prediction_label.replace('_', ' ')}**",
+                        icon="💚"
+                    )
+                else: # Insufficient
+                    st.info(
+                        f"**Prediction: {prediction_label.replace('_', ' ')}**",
+                        icon="ℹ️"
+                    )
+                
+                st.info("This is an AI-generated assessment for informational purposes only. Please consult a healthcare professional for medical advice.")
+
+            except Exception as e:
+                st.error(f"❌ An error occurred during prediction: {e}")
 
 
 
