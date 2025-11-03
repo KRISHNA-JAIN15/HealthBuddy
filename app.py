@@ -191,7 +191,19 @@ def load_kidney_disease_model():
     except Exception as e:
         st.error(f"❌ An error occurred while loading the Kidney Disease model: {e}")
         return None
-
+    
+@st.cache_resource
+def load_diabetes_model():
+    # Load the model from the Diabetes folder
+    model_path = os.path.join('Diabetes', 'logreg_ckd_model.pkl')
+    try:
+        with open(model_path, 'rb') as file:
+            diabetes_pipeline = pickle.load(file)
+        print("Diabetes (Logistic Regression) model loaded successfully")
+        return diabetes_pipeline
+    except Exception as e:
+        st.error(f"❌ An error occurred while loading the Diabetes model: {e}")
+        return None
 
 
 model, scaler, feature_names = load_body_fat_model()
@@ -200,7 +212,7 @@ maternal_model_pipeline = load_maternal_health_model()
 obesity_model = obesity_model_loader()
 gallstone_model = gallstone_model_loader()
 kidney_model_pipeline = load_kidney_disease_model()
-
+diabetes_model_pipeline = load_diabetes_model()
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -1223,9 +1235,148 @@ elif app_mode == "🪨 GallStone Predictor":
 
 
 # --- PLACEHOLDER PAGES ---
+# --- DIABETES PREDICTOR PAGE ---
 elif app_mode == "🩸 Diabetes Predictor":
     st.markdown("# 🩸 Diabetes Risk Predictor")
-    st.info("🛠️ **Feature Coming Soon!** Our data science team is fine-tuning this predictor for maximum accuracy.", icon="⚡")
+    st.markdown("This predictor analyzes **24 clinical metrics** to assess risk, based on our **Custom Logistic Regression** model.")
+
+    # These are the 24 features your model was trained on
+    COLUMN_ORDER = [
+        'age', 'bp', 'sg', 'al', 'su', 'rbc', 'pc', 'pcc', 'ba', 'bgr', 
+        'bu', 'sc', 'sod', 'pot', 'hemo', 'pcv', 'wc', 'rc', 'htn', 'dm', 
+        'cad', 'appet', 'pe', 'ane'
+    ]
+    
+    with st.form("diabetes_form"):
+        st.markdown("### 👤 Patient Vitals")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            age = st.number_input("Age (years)", min_value=1, max_value=120, value=50)
+        with col2:
+            bp = st.number_input("Blood Pressure (bp, mm/Hg)", min_value=40.0, max_value=200.0, value=80.0, step=1.0)
+        with col3:
+            bgr = st.number_input("Blood Glucose (bgr, mgs/dl)", min_value=20.0, max_value=500.0, value=100.0, step=1.0)
+
+        st.markdown("### 🧪 Lab Results (Blood)")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            bu = st.number_input("Blood Urea (bu, mgs/dl)", min_value=1.0, max_value=400.0, value=40.0, step=0.1)
+        with col2:
+            sc = st.number_input("Serum Creatinine (sc, mgs/dl)", min_value=0.1, max_value=80.0, value=1.2, step=0.1)
+        with col3:
+            sod = st.number_input("Sodium (sod, mEq/L)", min_value=100.0, max_value=180.0, value=138.0, step=0.1)
+        with col4:
+            pot = st.number_input("Potassium (pot, mEq/L)", min_value=2.0, max_value=10.0, value=4.5, step=0.1)
+
+        st.markdown("### 🩸 Lab Results (Complete Blood Count)")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            hemo = st.number_input("Hemoglobin (hemo, gms/dl)", min_value=3.0, max_value=20.0, value=15.0, step=0.1)
+        with col2:
+            pcv = st.number_input("Packed Cell Vol (pcv, %)", min_value=10.0, max_value=60.0, value=45.0, step=1.0)
+        with col3:
+            wc = st.number_input("WBC Count (wc, cells/cumm)", min_value=2000.0, max_value=30000.0, value=7500.0, step=100.0)
+        with col4:
+            rc = st.number_input("RBC Count (rc, millions/cmm)", min_value=2.0, max_value=9.0, value=5.2, step=0.1)
+
+        st.markdown("### 💧 Urinalysis (Nominal Values)")
+        # --- IMPORTANT: These must be strings or numbers as defined in your training script ---
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            # Your training script treated these as numeric, so we use numbers
+            sg = st.selectbox("Specific Gravity (sg)", (1.005, 1.010, 1.015, 1.020, 1.025), index=2)
+        with col2:
+            al = st.selectbox("Albumin (al)", (0.0, 1.0, 2.0, 3.0, 4.0, 5.0), index=0)
+        with col3:
+            su = st.selectbox("Sugar (su)", (0.0, 1.0, 2.0, 3.0, 4.0, 5.0), index=0)
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            rbc = st.selectbox("Red Blood Cells (rbc)", ('normal', 'abnormal'), index=0)
+        with col2:
+            pc = st.selectbox("Pus Cell (pc)", ('normal', 'abnormal'), index=0)
+        with col3:
+            pcc = st.selectbox("Pus Cell Clumps (pcc)", ('notpresent', 'present'), index=0)
+        
+        with col1: # Re-using first column
+             ba = st.selectbox("Bacteria (ba)", ('notpresent', 'present'), index=0)
+
+        st.markdown("### 🩺 Clinical History & Symptoms (Nominal)")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            htn = st.selectbox("Hypertension (htn)", ('no', 'yes'), index=0)
+        with col2:
+            dm = st.selectbox("Diabetes Mellitus (dm)", ('no', 'yes'), index=0, help="Note: This is a historical symptom, not the prediction target.")
+        with col3:
+            cad = st.selectbox("Coronary Artery Disease (cad)", ('no', 'yes'), index=0)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            appet = st.selectbox("Appetite (appet)", ('good', 'poor'), index=0)
+        with col2:
+            pe = st.selectbox("Pedal Edema (pe)", ('no', 'yes'), index=0)
+        with col3:
+            ane = st.selectbox("Anemia (ane)", ('no', 'yes'), index=0)
+
+        st.markdown("---")
+        submitted = st.form_submit_button("🩺 Analyze My Risk")
+
+    if submitted:
+        if diabetes_model_pipeline is None:
+            st.error("❌ **Model Error:** The Diabetes prediction model is not loaded. Please check the server logs.")
+        else:
+            try:
+                # 1. Create a dictionary of all 24 inputs
+                input_data = {
+                    'age': age, 'bp': bp, 'sg': sg, 'al': al, 'su': su, 'rbc': rbc,
+                    'pc': pc, 'pcc': pcc, 'ba': ba, 'bgr': bgr, 'bu': bu, 'sc': sc,
+                    'sod': sod, 'pot': pot, 'hemo': hemo, 'pcv': pcv, 'wc': wc,
+                    'rc': rc, 'htn': htn, 'dm': dm, 'cad': cad, 'appet': appet,
+                    'pe': pe, 'ane': ane
+                }
+                
+                # 2. Convert to DataFrame with correct column order
+                input_df = pd.DataFrame([input_data], columns=COLUMN_ORDER)
+
+                # 3. Make prediction
+                prediction_encoded = diabetes_model_pipeline.predict(input_df)
+                
+                # 4. Map to class names (from your predict.py)
+                # 0 = ckd, 1 = notckd
+                class_names = ['High Risk', 'Low Risk'] 
+                prediction_label = class_names[prediction_encoded[0]]
+                
+                # --- [END] NEW PREDICTION LOGIC ---
+
+                st.markdown("### 📋 Analysis Results")
+                
+                if prediction_label == 'High Risk':
+                    st.error(
+                        f"**⚠️ HIGH RISK DETECTED**",
+                        icon="🚨"
+                    )
+                    st.warning(
+                        """
+                        **Medical Note:**
+                        
+                        This prediction indicates a high-risk profile based on clinical markers. Please consult an endocrinologist or healthcare provider **immediately** for proper evaluation.
+                        """
+                    )
+                else: # 'Low Risk'
+                    st.success(
+                        f"**✅ LOW RISK DETECTED**",
+                        icon="💚"
+                    )
+                    st.info(
+                        """
+                        **Recommendation:**
+                        
+                        Your results suggest a low-risk profile. Continue to maintain regular health check-ups and a healthy lifestyle.
+                        """
+                        )
+            
+            except Exception as e:
+                st.error(f"❌ An error occurred during prediction: {e}")
 
 elif app_mode == "🩺 Liver Disease Predictor":
     st.markdown("# 🩺 Liver Disease Predictor")
