@@ -6,6 +6,15 @@ import os
 
 import sys
 
+# Define missing classes for pickle compatibility
+class OvRWrapper:
+    pass
+
+class _RemainderColsList:
+    pass
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 # Add this directory to Python's search path
 if PROJECT_ROOT not in sys.path:
@@ -144,13 +153,6 @@ def load_maternal_health_model():
 def obesity_model_loader():
     model_path = os.path.join('ObesityLevel', 'decision_tree_model.pkl')
     try:
-        # Monkey patch for sklearn compatibility issue
-        import sklearn.compose._column_transformer
-        if not hasattr(sklearn.compose._column_transformer, '_RemainderColsList'):
-            class _RemainderColsList:
-                pass
-            sklearn.compose._column_transformer._RemainderColsList = _RemainderColsList
-        
         with open(model_path, 'rb') as file:
             obesity_model = pickle.load(file)
         print("Obesity model loaded successfully")
@@ -162,14 +164,27 @@ def obesity_model_loader():
         st.error(f"❌ An error occurred while loading the file: {e}")
         return None
 
-      
+@st.cache_resource
+def gallstone_model_loader():
+    model_path = os.path.join('GallStone', 'gallstone_adaboost_model.pkl')
+    try:
+        with open(model_path, 'rb') as file:
+            gallstone_model = pickle.load(file)
+        print("GallStone model loaded successfully")
+        return gallstone_model
+    except FileNotFoundError:
+        st.error(f"❌ ERROR: The file '{model_path}' was not found.")
+        return None
+    except Exception as e:
+        st.error(f"❌ An error occurred while loading the file: {e}")
+        return None     
 
 
 model, scaler, feature_names = load_body_fat_model()
 heart_model_pipeline = load_heart_attack_model()      
 maternal_model_pipeline = load_maternal_health_model()
 obesity_model = obesity_model_loader()
-
+gallstone_model = gallstone_model_loader()
 
 
 
@@ -485,8 +500,8 @@ with st.sidebar:
             "💪 Body Fat Predictor",
             "🤰 Maternal Health Predictor",
             "⚖️ Obesity Level Predictor",
+            "🪨 GallStone Predictor",
             "🩸 Diabetes Predictor",
-            "🩺 Liver Disease Predictor",
             "🔬 Kidney Disease Predictor",
             "🧠 Stroke Predictor",
             "🎀 Breast Cancer Predictor",
@@ -1012,7 +1027,182 @@ elif app_mode == "⚖️ Obesity Level Predictor":
 
 
 
+# --- GALLSTONE PREDICTOR PAGE ---
+elif app_mode == "🪨 GallStone Predictor":
+    st.markdown("# 🪨 GallStone Risk Predictor")
+    st.markdown("Our **Custom AdaBoost** model will analyze 38 health and body composition metrics to predict gallstone risk.")
 
+    # Define the 38 features and their order
+    COLUMN_ORDER = [
+        'Age', 'Gender', 'Height', 'Weight', 'Body_Mass_Index_BMI', 'Total_Body_Water_TBW', 
+        'Extracellular_Water_ECW', 'Intracellular_Water_ICW', 'Extracellular_Fluid/Total_Body_Water_ECF/TBW', 
+        'Total_Body_Fat_Ratio_TBFR', 'Lean_Mass_LM', 'Body_Protein_Content_Protein', 
+        'Visceral_Fat_Rating_VFR', 'Bone_Mass_BM', 'Muscle_Mass_MM', 'Obesity', 
+        'Total_Fat_Content_TFC', 'Visceral_Fat_Area_VFA', 'Visceral_Muscle_Area_VMA_Kg', 
+        'Glucose', 'Total_Cholesterol_TC', 'Low_Density_Lipoprotein_LDL', 
+        'High_Density_Lipoprotein_HDL', 'Triglyceride', 'Aspartat_Aminotransferaz_AST', 
+        'Alanin_Aminotransferaz_ALT', 'Alkaline_Phosphatase_ALP', 'Creatinine', 
+        'Glomerular_Filtration_Rate_GFR', 'C-Reactive_Protein_CRP', 'Hemoglobin_HGB', 
+        'Vitamin_D', 'Coronary_Artery_Disease_CAD', 'Hypothyroidism', 'Hyperlipidemia', 
+        'Diabetes_Mellitus_DM', 'Comorbidity', 'Hepatic_Fat_Accumulation_HFA'
+    ]
+
+    with st.form("gallstone_form"):
+        st.markdown("### 👤 Patient Demographics")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            Age = st.number_input("Age", min_value=1, max_value=120, value=50)
+        with col2:
+            Gender = st.selectbox("Gender", ('Male', 'Female'))
+        with col3:
+            Height = st.number_input("Height (cm)", min_value=100.0, max_value=250.0, value=165.0, step=0.1)
+        with col4:
+            Weight = st.number_input("Weight (kg)", min_value=30.0, max_value=200.0, value=75.0, step=0.1)
+        
+        st.markdown("### 📊 Body Composition")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            Body_Mass_Index_BMI = st.number_input("BMI", min_value=10.0, max_value=60.0, value=28.0, step=0.1)
+        with col2:
+            Total_Body_Water_TBW = st.number_input("Total Body Water (TBW)", value=30.0, step=0.1)
+        with col3:
+            Extracellular_Water_ECW = st.number_input("Extracellular Water (ECW)", value=12.0, step=0.1)
+        with col4:
+            Intracellular_Water_ICW = st.number_input("Intracellular Water (ICW)", value=18.0, step=0.1)
+
+        with col1:
+            Total_Body_Fat_Ratio_TBFR = st.number_input("Total Body Fat Ratio (%)", value=35.0, step=0.1)
+        with col2:
+            Lean_Mass_LM = st.number_input("Lean Mass (kg)", value=45.0, step=0.1)
+        with col3:
+            Body_Protein_Content_Protein = st.number_input("Protein (kg)", value=9.0, step=0.1)
+        with col4:
+            Visceral_Fat_Rating_VFR = st.number_input("Visceral Fat Rating", value=10, step=1)
+            
+        with col1:
+            Bone_Mass_BM = st.number_input("Bone Mass (kg)", value=2.0, step=0.1)
+        with col2:
+            Muscle_Mass_MM = st.number_input("Muscle Mass (kg)", value=42.0, step=0.1)
+        with col3:
+            Total_Fat_Content_TFC = st.number_input("Total Fat Content (kg)", value=25.0, step=0.1)
+        with col4:
+            Visceral_Fat_Area_VFA = st.number_input("Visceral Fat Area (cm²)", value=90.0, step=0.1)
+            
+        with col1:
+             Visceral_Muscle_Area_VMA_Kg = st.number_input("Visceral Muscle Area (kg)", value=40.0, step=0.1)
+        with col2:
+            Obesity = st.number_input("Obesity (0=No, 1=Yes)", 0, 1, 0)
+            
+        
+        st.markdown("### 🧪 Blood Labs")
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            Glucose = st.number_input("Glucose", value=100.0, step=0.1)
+        with col2:
+            Total_Cholesterol_TC = st.number_input("Total Cholesterol (TC)", value=220.0, step=0.1)
+        with col3:
+            Low_Density_Lipoprotein_LDL = st.number_input("LDL", value=130.0, step=0.1)
+        with col4:
+            High_Density_Lipoprotein_HDL = st.number_input("HDL", value=40.0, step=0.1)
+
+        with col1:
+            Triglyceride = st.number_input("Triglyceride", value=160.0, step=0.1)
+        with col2:
+            Aspartat_Aminotransferaz_AST = st.number_input("AST", value=30.0, step=0.1)
+        with col3:
+            Alanin_Aminotransferaz_ALT = st.number_input("ALT", value=35.0, step=0.1)
+        with col4:
+            Alkaline_Phosphatase_ALP = st.number_input("ALP", value=100.0, step=0.1)
+            
+        with col1:
+            Creatinine = st.number_input("Creatinine", value=0.9, step=0.1)
+        with col2:
+            Glomerular_Filtration_Rate_GFR = st.number_input("GFR", value=80.0, step=0.1)
+        with col3:
+            C_Reactive_Protein_CRP = st.number_input("C-Reactive Protein (CRP)", value=2.0, step=0.1)
+        with col4:
+            Hemoglobin_HGB = st.number_input("Hemoglobin (HGB)", value=13.0, step=0.1)
+        
+        with col1:
+            Vitamin_D = st.number_input("Vitamin D", value=20.0, step=0.1)
+
+        st.markdown("### 🩺 Clinical History")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            Coronary_Artery_Disease_CAD = st.number_input("CAD (0=No, 1=Yes)", 0, 1, 0)
+        with col2:
+            Hypothyroidism = st.number_input("Hypothyroidism (0=No, 1=Yes)", 0, 1, 0)
+        with col3:
+            Hyperlipidemia = st.number_input("Hyperlipidemia (0=No, 1=Yes)", 0, 1, 0)
+
+        with col1:
+            Diabetes_Mellitus_DM = st.number_input("Diabetes (0=No, 1=Yes)", 0, 1, 0)
+        with col2:
+            Comorbidity = st.selectbox("Comorbidity", ('No', 'Yes'))
+        with col3:
+            Hepatic_Fat_Accumulation_HFA = st.selectbox("Hepatic Fat Accumulation", ('None', 'Mild', 'Moderate', 'Severe'))
+
+        st.markdown("---")
+        submitted = st.form_submit_button("🪨 Analyze GallStone Risk")
+
+    if submitted:
+        if gallstone_model is None:
+            st.error("❌ **Model Error:** The GallStone prediction model is not loaded. Please check the server logs.")
+        else:
+            try:
+                # 1. Create a dictionary of all 38 inputs
+                input_data = {
+                    'Age': Age, 'Gender': Gender, 'Height': Height, 'Weight': Weight, 
+                    'Body_Mass_Index_BMI': Body_Mass_Index_BMI, 'Total_Body_Water_TBW': Total_Body_Water_TBW, 
+                    'Extracellular_Water_ECW': Extracellular_Water_ECW, 'Intracellular_Water_ICW': Intracellular_Water_ICW, 
+                    'Extracellular_Fluid/Total_Body_Water_ECF/TBW': Extracellular_Water_ECW / Total_Body_Water_TBW if Total_Body_Water_TBW else 0, # Calculate ratio
+                    'Total_Body_Fat_Ratio_TBFR': Total_Body_Fat_Ratio_TBFR, 'Lean_Mass_LM': Lean_Mass_LM, 
+                    'Body_Protein_Content_Protein': Body_Protein_Content_Protein, 
+                    'Visceral_Fat_Rating_VFR': Visceral_Fat_Rating_VFR, 'Bone_Mass_BM': Bone_Mass_BM, 
+                    'Muscle_Mass_MM': Muscle_Mass_MM, 'Obesity': Obesity, 
+                    'Total_Fat_Content_TFC': Total_Fat_Content_TFC, 'Visceral_Fat_Area_VFA': Visceral_Fat_Area_VFA, 
+                    'Visceral_Muscle_Area_VMA_Kg': Visceral_Muscle_Area_VMA_Kg, 
+                    'Glucose': Glucose, 'Total_Cholesterol_TC': Total_Cholesterol_TC, 
+                    'Low_Density_Lipoprotein_LDL': Low_Density_Lipoprotein_LDL, 
+                    'High_Density_Lipoprotein_HDL': High_Density_Lipoprotein_HDL, 'Triglyceride': Triglyceride, 
+                    'Aspartat_Aminotransferaz_AST': Aspartat_Aminotransferaz_AST, 
+                    'Alanin_Aminotransferaz_ALT': Alanin_Aminotransferaz_ALT, 'Alkaline_Phosphatase_ALP': Alkaline_Phosphatase_ALP, 
+                    'Creatinine': Creatinine, 'Glomerular_Filtration_Rate_GFR': Glomerular_Filtration_Rate_GFR, 
+                    'C-Reactive_Protein_CRP': C_Reactive_Protein_CRP, 'Hemoglobin_HGB': Hemoglobin_HGB, 
+                    'Vitamin_D': Vitamin_D, 'Coronary_Artery_Disease_CAD': Coronary_Artery_Disease_CAD, 
+                    'Hypothyroidism': Hypothyroidism, 'Hyperlipidemia': Hyperlipidemia, 
+                    'Diabetes_Mellitus_DM': Diabetes_Mellitus_DM, 'Comorbidity': Comorbidity, 
+                    'Hepatic_Fat_Accumulation_HFA': Hepatic_Fat_Accumulation_HFA
+                }
+                
+                # 2. Convert to DataFrame with correct column order
+                input_df = pd.DataFrame([input_data], columns=COLUMN_ORDER)
+
+                # 3. Make prediction (pipeline handles all preprocessing)
+                prediction = gallstone_model.predict(input_df)
+                
+                # Get the single prediction ('Yes' or 'No')
+                result_label = prediction[0]
+                
+                # --- [END] NEW PREDICTION LOGIC ---
+
+                st.markdown("### 📋 Analysis Results")
+                
+                if result_label == 'Yes':
+                    st.error(
+                        f"**Prediction: {result_label} (High Risk for GallStones)**",
+                        icon="🚨"
+                    )
+                    st.warning("This prediction indicates an elevated risk for gallstones. Please consult a healthcare provider for further evaluation.")
+                else: # 'No'
+                    st.success(
+                        f"**Prediction: {result_label} (Low Risk for GallStones)**",
+                        icon="💚"
+                    )
+                    st.info("Your results suggest a low risk. Continue to maintain a healthy lifestyle and regular check-ups.")
+            
+            except Exception as e:
+                st.error(f"❌ An error occurred during prediction: {e}")
 
 
 
