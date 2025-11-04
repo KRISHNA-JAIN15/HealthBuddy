@@ -3,6 +3,7 @@ import pickle
 import pandas as pd
 import numpy as np
 import os
+import tempfile
 
 import sys
 
@@ -303,87 +304,109 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-    /* Import modern font */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-    
-    /* Global font */
+    /* Import modern fonts */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Poppins:wght@300;400;500;600;700;800&display=swap');
+
+    /* Global reset and base styles */
     * {
-        font-family: 'Inter', sans-serif;
+        box-sizing: border-box;
     }
-    
-    /* Main app background with gradient */
+
+    /* Main app container */
     [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #f5f7fa 0%, #e8eef5 100%);
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
+        min-height: 100vh;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
 
-    /* Sidebar styling */
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* Sidebar styling - Modern glassmorphism effect */
     [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%);
-        border-right: none;
+        background: linear-gradient(145deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.95) 100%);
+        backdrop-filter: blur(20px);
+        border-right: 1px solid rgba(148,163,184,0.1);
+        box-shadow: 4px 0 24px rgba(0,0,0,0.08);
+        border-radius: 0 24px 24px 0;
+        padding: 2rem 1rem;
     }
-    
-    /* Sidebar content text color fix */
-    [data-testid="stSidebar"] * {
-        color: #ffffff !important;
-    }
-    
-    /* Sidebar title */
+
+    /* Sidebar title - Elegant typography */
     [data-testid="stSidebar"] h1 {
-        font-size: 2rem;
+        font-family: 'Poppins', sans-serif;
+        font-size: 2.2rem;
         font-weight: 800;
-        color: #ffffff !important;
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
         text-align: center;
-        padding: 1.5rem 0;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        margin-bottom: 2rem;
         letter-spacing: -0.5px;
+        text-shadow: none;
     }
 
-    /* Sidebar divider */
-    [data-testid="stSidebar"] hr {
-        border-color: rgba(255,255,255,0.2);
-        margin: 1rem 0;
-    }
-
-    /* Radio buttons styling */
+    /* Sidebar navigation buttons - Modern pill design */
     [data-testid="stSidebar"] .row-widget {
-        background-color: transparent;
+        margin: 0.5rem 0;
     }
-    
+
     [data-testid="stSidebar"] label[data-baseweb="radio"] {
-        background-color: rgba(255,255,255,0.1);
-        border-radius: 0.75rem;
-        padding: 0.75rem 1rem;
+        background: rgba(255,255,255,0.8);
+        border: 2px solid rgba(148,163,184,0.2);
+        border-radius: 16px;
+        padding: 1rem 1.5rem;
         margin: 0.4rem 0;
-        transition: all 0.3s ease;
-        border: 2px solid transparent;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         cursor: pointer;
+        position: relative;
+        overflow: hidden;
+        backdrop-filter: blur(10px);
     }
-    
+
     [data-testid="stSidebar"] label[data-baseweb="radio"]:hover {
-        background-color: rgba(255,255,255,0.2);
-        border-color: rgba(255,255,255,0.4);
-        transform: translateX(5px);
+        background: rgba(59,130,246,0.1);
+        border-color: rgba(59,130,246,0.3);
+        transform: translateX(8px) scale(1.02);
+        box-shadow: 0 8px 25px rgba(59,130,246,0.15);
     }
-    
+
     [data-testid="stSidebar"] label[data-baseweb="radio"][data-checked="true"] {
-        background-color: rgba(255,255,255,0.25);
-        border-color: #4fc3f7;
-        box-shadow: 0 4px 12px rgba(79,195,247,0.3);
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        border-color: #1d4ed8;
+        color: white !important;
+        box-shadow: 0 8px 25px rgba(59,130,246,0.4);
+        transform: translateX(8px);
     }
-    
-    /* Hero Section */
+
+    [data-testid="stSidebar"] label[data-baseweb="radio"][data-checked="true"]:before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 4px;
+        height: 100%;
+        background: rgba(255,255,255,0.8);
+        border-radius: 0 4px 4px 0;
+    }
+
+    /* Hero section - Dramatic and modern */
     .hero-container {
-        padding: 4rem 2rem;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        border-radius: 1.5rem;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+        border-radius: 24px;
         color: white;
         text-align: center;
-        box-shadow: 0 20px 60px rgba(0,0,0,0.15);
+        padding: 4rem 3rem;
         margin-bottom: 3rem;
         position: relative;
         overflow: hidden;
+        box-shadow: 0 25px 50px rgba(0,0,0,0.15);
+        backdrop-filter: blur(20px);
     }
-    
+
     .hero-container::before {
         content: '';
         position: absolute;
@@ -392,196 +415,387 @@ st.markdown(
         width: 200%;
         height: 200%;
         background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
-        animation: pulse 15s ease-in-out infinite;
+        animation: float 20s ease-in-out infinite;
     }
-    
-    @keyframes pulse {
-        0%, 100% { transform: scale(1); }
-        50% { transform: scale(1.1); }
+
+    @keyframes float {
+        0%, 100% { transform: translate(-50%, -50%) rotate(0deg); }
+        50% { transform: translate(-50%, -50%) rotate(180deg); }
     }
-    
+
     .hero-container h1 {
-        font-size: 3.5rem;
+        font-family: 'Poppins', sans-serif;
+        font-size: 3.8rem;
         font-weight: 900;
-        margin-bottom: 1rem;
-        text-shadow: 3px 3px 6px rgba(0,0,0,0.3);
-        position: relative;
-        z-index: 1;
+        margin-bottom: 1.5rem;
+        text-shadow: 0 4px 20px rgba(0,0,0,0.3);
         letter-spacing: -1px;
+        position: relative;
+        z-index: 2;
     }
-    
+
     .hero-container h3 {
-        font-size: 1.5rem;
+        font-size: 1.6rem;
         font-weight: 400;
         opacity: 0.95;
-        position: relative;
-        z-index: 1;
         line-height: 1.6;
+        position: relative;
+        z-index: 2;
+        max-width: 600px;
+        margin: 0 auto;
     }
 
-    /* Card styling for content sections */
-    .info-card {
-        background: white;
-        padding: 2rem;
-        border-radius: 1rem;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-        margin-bottom: 2rem;
-        border: 1px solid rgba(0,0,0,0.05);
-        transition: transform 0.3s ease, box-shadow 0.3s ease;
-    }
-    
-    .info-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 12px 36px rgba(0,0,0,0.12);
-    }
-
-    /* Headers styling */
-    h1, h2, h3 {
-        color: #2c3e50 !important;
-        font-weight: 700;
-    }
-    
-    h2 {
-        border-bottom: 3px solid #667eea;
-        padding-bottom: 0.5rem;
-        margin-bottom: 1.5rem;
-    }
-
-    /* Form styling */
-    [data-testid="stForm"] {
-        background-color: white;
+    /* Content cards - Clean and professional */
+    .content-card {
+        background: rgba(255,255,255,0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 20px;
         padding: 2.5rem;
-        border-radius: 1.5rem;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        border: 1px solid rgba(0,0,0,0.05);
+        margin-bottom: 2rem;
+        border: 1px solid rgba(148,163,184,0.1);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    
-    /* Input fields */
-    .stNumberInput input, .stSelectbox select {
-        border-radius: 0.5rem;
-        border: 2px solid #e0e7ff;
-        padding: 0.75rem;
+
+    .content-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+    }
+
+    /* Form containers - Modern glass effect */
+    [data-testid="stForm"] {
+        background: rgba(255,255,255,0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 24px;
+        padding: 3rem;
+        border: 1px solid rgba(148,163,184,0.1);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.1);
+        margin-bottom: 2rem;
+    }
+
+    /* Form sections */
+    .form-section {
+        background: rgba(248,250,252,0.8);
+        border-radius: 16px;
+        padding: 2rem;
+        margin-bottom: 2rem;
+        border: 1px solid rgba(148,163,184,0.1);
+    }
+
+    .form-section h3 {
+        color: #1e293b !important;
+        font-family: 'Poppins', sans-serif;
+        font-weight: 700;
+        margin-bottom: 1.5rem;
+        font-size: 1.4rem;
+        border-bottom: 3px solid #3b82f6;
+        padding-bottom: 0.5rem;
+    }
+
+    /* Input fields - Modern design */
+    .stNumberInput input, .stTextInput input {
+        border-radius: 12px;
+        border: 2px solid #cbd5e1;
+        padding: 0.875rem 1rem;
         font-size: 1rem;
-        transition: all 0.3s ease;
+        font-weight: 500;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        background: white;
+        color: #1e293b;
     }
-    
-    .stNumberInput input:focus, .stSelectbox select:focus {
-        border-color: #667eea;
-        box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
+
+    /* Specific styling for select dropdowns to ensure contrast */
+    .stSelectbox select {
+        border-radius: 12px;
+        border: 2px solid #cbd5e1;
+        padding: 0.875rem 1rem;
+        font-size: 1rem;
+        font-weight: 500;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        background: #374151 !important;
+        color: white !important;
     }
-    
-    /* Labels */
+
+    .stSelectbox select option {
+        background: #374151 !important;
+        color: white !important;
+    }
+
+    .stNumberInput input:focus, .stTextInput input:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+        background: white;
+        outline: none;
+    }
+
+    .stSelectbox select:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+        background: #374151;
+        outline: none;
+    }
+
+    /* Labels - Clean typography */
     label {
-        color: #4a5568 !important;
+        color: #374151 !important;
         font-weight: 600 !important;
         font-size: 0.95rem !important;
         margin-bottom: 0.5rem !important;
+        font-family: 'Inter', sans-serif;
     }
-    
-    /* Form submit button */
+
+    /* Submit button - Professional single color */
     [data-testid="stFormSubmitButton"] button {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
+        background: #3b82f6;
+        color: black !important;
         font-weight: 700;
         width: 100%;
-        font-size: 1.2rem;
-        border-radius: 0.75rem;
+        font-size: 1.25rem;
+        border-radius: 16px;
         border: none;
-        padding: 1rem 0;
-        transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(102,126,234,0.4);
+        padding: 1.25rem 2rem;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 4px 15px rgba(59,130,246,0.3);
         text-transform: uppercase;
         letter-spacing: 1px;
+        font-family: 'Poppins', sans-serif;
     }
-    
+
     [data-testid="stFormSubmitButton"] button:hover {
+        background: #2563eb;
         transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(102,126,234,0.5);
-    }
-    
-    /* Success/Error/Info/Warning boxes */
-    [data-testid="stSuccess"] {
-        background-color: #d4edda;
-        border-left: 5px solid #28a745;
-        border-radius: 0.75rem;
-        padding: 1.25rem;
-        color: #155724 !important;
-    }
-    
-    [data-testid="stSuccess"] * {
-        color: #155724 !important;
-    }
-    
-    [data-testid="stError"] {
-        background-color: #f8d7da;
-        border-left: 5px solid #dc3545;
-        border-radius: 0.75rem;
-        padding: 1.25rem;
-        color: #721c24 !important;
-    }
-    
-    [data-testid="stError"] * {
-        color: #721c24 !important;
-    }
-    
-    [data-testid="stInfo"] {
-        background-color: #d1ecf1;
-        border-left: 5px solid #17a2b8;
-        border-radius: 0.75rem;
-        padding: 1.25rem;
-        color: #0c5460 !important;
-    }
-    
-    [data-testid="stInfo"] * {
-        color: #0c5460 !important;
-    }
-    
-    [data-testid="stWarning"] {
-        background-color: #fff3cd;
-        border-left: 5px solid #ffc107;
-        border-radius: 0.75rem;
-        padding: 1.25rem;
-        color: #856404 !important;
-    }
-    
-    [data-testid="stWarning"] * {
-        color: #856404 !important;
+        box-shadow: 0 8px 25px rgba(59,130,246,0.4);
     }
 
-    /* Columns content */
-    [data-testid="column"] > div {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 1rem;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.06);
-        height: 100%;
-    }
-
-    /* Divider */
-    hr {
+    /* Regular buttons */
+    .stButton button {
+        border-radius: 12px;
+        font-weight: 600;
+        padding: 0.75rem 3rem;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         border: none;
-        border-top: 2px solid #e0e7ff;
-        margin: 2rem 0;
+        background: #10b981;
+        color: black !important;
+        box-shadow: 0 4px 15px rgba(16,185,129,0.3);
     }
-    
-    /* Subheaders in forms */
-    [data-testid="stForm"] h3 {
-        color: #667eea !important;
-        font-size: 1.3rem;
-        margin-top: 1.5rem;
-        margin-bottom: 1rem;
+
+    .stButton button:hover {
+        background: #059669;
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(16,185,129,0.4);
+    }
+
+    /* Alert boxes - Modern design */
+    [data-testid="stSuccess"] {
+        background: linear-gradient(135deg, rgba(16,185,129,0.1) 0%, rgba(16,185,129,0.05) 100%);
+        border: 1px solid rgba(16,185,129,0.2);
+        border-left: 4px solid #10b981;
+        border-radius: 12px;
+        padding: 1.5rem;
+        color: #065f46 !important;
+        backdrop-filter: blur(10px);
+    }
+
+    [data-testid="stError"] {
+        background: linear-gradient(135deg, rgba(239,68,68,0.1) 0%, rgba(239,68,68,0.05) 100%);
+        border: 1px solid rgba(239,68,68,0.2);
+        border-left: 4px solid #ef4444;
+        border-radius: 12px;
+        padding: 1.5rem;
+        color: #991b1b !important;
+        backdrop-filter: blur(10px);
+    }
+
+    [data-testid="stWarning"] {
+        background: linear-gradient(135deg, rgba(245,158,11,0.1) 0%, rgba(245,158,11,0.05) 100%);
+        border: 1px solid rgba(245,158,11,0.2);
+        border-left: 4px solid #f59e0b;
+        border-radius: 12px;
+        padding: 1.5rem;
+        color: #92400e !important;
+        backdrop-filter: blur(10px);
+    }
+
+    [data-testid="stInfo"] {
+        background: linear-gradient(135deg, rgba(59,130,246,0.1) 0%, rgba(59,130,246,0.05) 100%);
+        border: 1px solid rgba(59,130,246,0.2);
+        border-left: 4px solid #3b82f6;
+        border-radius: 12px;
+        padding: 1.5rem;
+        color: #1e40af !important;
+        backdrop-filter: blur(10px);
+    }
+
+    /* Headers - Modern typography */
+    h1, h2, h3 {
+        font-family: 'Poppins', sans-serif;
+        color: #1e293b !important;
         font-weight: 700;
+        letter-spacing: -0.5px;
     }
-    
-    /* Regular text readability */
-    p, li, span {
-        color: #4a5568 !important;
+
+    h1 {
+        font-size: 2.5rem;
+        background: linear-gradient(135deg, #1e293b 0%, #374151 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 1rem;
+    }
+
+    h2 {
+        font-size: 2rem;
+        border-bottom: 3px solid #3b82f6;
+        padding-bottom: 0.75rem;
+        margin-bottom: 2rem;
+    }
+
+    h3 {
+        font-size: 1.25rem;
+        color: #374151 !important;
+    }
+
+    /* Columns - Better spacing */
+    [data-testid="column"] {
+        padding: 0 1rem;
+    }
+
+    [data-testid="column"]:first-child {
+        padding-left: 0;
+    }
+
+    [data-testid="column"]:last-child {
+        padding-right: 0;
+    }
+
+    /* File uploader - Modern design */
+    [data-testid="stFileUploader"] {
+        background: rgba(255,255,255,0.9);
+        border: 2px dashed rgba(148,163,184,0.3);
+        border-radius: 16px;
+        padding: 2rem;
+        transition: all 0.3s ease;
+        backdrop-filter: blur(10px);
+    }
+
+    [data-testid="stFileUploader"]:hover {
+        border-color: #3b82f6;
+        background: rgba(59,130,246,0.02);
+    }
+
+    /* Images - Rounded corners */
+    .stImage img {
+        border-radius: 16px;
+        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    }
+
+    /* Progress bars - Modern styling */
+    .stProgress > div > div {
+        background: #3b82f6;
+        border-radius: 10px;
+    }
+
+    /* Spinners - Custom colors */
+    .stSpinner > div {
+        border-color: #3b82f6;
+        border-right-color: transparent;
+    }
+
+    /* General text improvements */
+    p, li, span, div {
+        color: #4b5563 !important;
         line-height: 1.7;
+        font-weight: 400;
     }
-    
-    /* Make sure markdown content is readable */
+
+    /* Markdown content */
     .stMarkdown {
-        color: #4a5568 !important;
+        color: #4b5563 !important;
+    }
+
+    /* Tables - Modern styling */
+    .stTable {
+        background: rgba(255,255,255,0.9);
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
+
+    .stTable table {
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    .stTable th {
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+        font-weight: 700;
+        color: #374151 !important;
+        padding: 1rem;
+        border-bottom: 2px solid #e5e7eb;
+    }
+
+    .stTable td {
+        padding: 1rem;
+        border-bottom: 1px solid #f3f4f6;
+    }
+
+    /* Scrollbars - Modern design */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: rgba(0,0,0,0.05);
+        border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: #cbd5e1;
+        border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8;
+    }
+
+    /* Animations */
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .fade-in-up {
+        animation: fadeInUp 0.6s ease-out;
+    }
+
+    /* Responsive design improvements */
+    @media (max-width: 768px) {
+        .hero-container h1 {
+            font-size: 2.5rem;
+        }
+
+        .hero-container {
+            padding: 2rem 1.5rem;
+        }
+
+        [data-testid="stSidebar"] {
+            border-radius: 0 16px 16px 0;
+        }
+
+        [data-testid="stForm"] {
+            padding: 1.5rem;
+        }
+
+        .form-section {
+            padding: 1rem;
+        }
     }
 </style>
     """,
@@ -591,22 +805,22 @@ st.markdown(
 
 # --- 3. SIDEBAR NAVIGATION ---
 with st.sidebar:
-    st.markdown("<h1>🩺 Health Buddy</h1>", unsafe_allow_html=True)
+    st.markdown("<h1>Health Buddy</h1>", unsafe_allow_html=True)
     st.markdown("---")
     
     app_mode = st.radio(
         "Choose your predictor:",
         [
-            "🏠 Home",
-            "❤️ Heart Attack Predictor",
-            "💪 Body Fat Predictor",
-            "🤰 Maternal Health Predictor",
-            "⚖️ Obesity Level Predictor",
-            "🪨 GallStone Predictor",
-            "🩸 Diabetes Predictor",
-            "🔬 Kidney Disease Predictor",
-            "🧠 Brain Tumor Predictor",
-            "🎀 Breast Cancer Predictor",
+            "Home",
+            "Heart Attack Predictor",
+            "Body Fat Predictor",
+            "Maternal Health Predictor",
+            "Obesity Level Predictor",
+            "GallStone Predictor",
+            "Diabetes Predictor",
+            "Kidney Disease Predictor",
+            "Brain Tumor Predictor",
+            "Breast Cancer Predictor",
         ],
         label_visibility="collapsed"
     )
@@ -614,7 +828,7 @@ with st.sidebar:
 # --- 4. MAIN PAGE CONTENT ---
 
 # --- HOME PAGE ---
-if app_mode == "🏠 Home":
+if app_mode == "Home":
     
     st.markdown(
         """
@@ -622,54 +836,63 @@ if app_mode == "🏠 Home":
             <h1>Welcome to Health Buddy!</h1>
             <h3>Your AI-powered health companion for intelligent predictions.
             <br>
-            Science-backed. Data-driven. Always here for you. 💙
+            Science-backed. Data-driven. Always here for you.
             </h3>
         </div>
         """,
         unsafe_allow_html=True,
     )
     
-    st.markdown("## 🎯 What We Do")
-    st.write(
-        "We leverage **7 state-of-the-art machine learning models** to analyze your health data with precision. "
-        "Our system has been rigorously trained on **9 comprehensive datasets** to identify the **most accurate classifier** for each medical condition."
-    )
+    st.markdown("## What We Do")
     st.markdown(
-        "### 👈 Select a predictor from the sidebar to get started!"
+        """
+        <div class="content-card">
+        <p>We leverage <strong>7 state-of-the-art machine learning models</strong> to analyze your health data with precision. 
+        Our system has been rigorously trained on <strong>9 comprehensive datasets</strong> to identify the <strong>most accurate classifier</strong> for each medical condition.</p>
+        <p><strong>Select a predictor from the sidebar to get started!</strong></p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
+
+    st.markdown('<div class="home-grid">', unsafe_allow_html=True)
+    
+    st.markdown(
+        """
+        <div class="home-card">
+        <h3>Our AI Arsenal</h3>
+        <p><strong>Machine Learning Models:</strong></p>
+        <ul>
+        <li>Logistic Regression</li>
+        <li>K-Nearest Neighbors (KNN)</li>
+        <li>Support Vector Machine (SVM)</li>
+        <li>Naive Bayes</li>
+        <li>Decision Tree</li>
+        <li>Random Forest</li>
+        <li>Gradient Boosting (XGBoost)</li>
+        </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    
+    st.markdown(
+        """
+        <div class="home-card">
+        <h3>Our Commitment</h3>
+        <p><strong>Accuracy is our #1 priority.</strong></p>
+        <p>We've analyzed thousands of data points and rigorously tested each model to select the <strong>single best performer</strong> for every health predictor.</p>
+        <p>You're not just getting <em>a</em> prediction — you're getting the <strong>best possible prediction</strong> backed by data science.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown("---")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### 🤖 Our AI Arsenal")
-        st.info(
-            """
-            **Machine Learning Models:**
-            - 🔵 Logistic Regression
-            - 🔵 K-Nearest Neighbors (KNN)
-            - 🔵 Support Vector Machine (SVM)
-            - 🔵 Naive Bayes
-            - 🔵 Decision Tree
-            - 🔵 Random Forest
-            - 🔵 Gradient Boosting (XGBoost)
-            """
-        )
-    with col2:
-        st.markdown("### 📊 Our Commitment")
-        st.warning(
-            """
-            **Accuracy is our #1 priority.**
-            
-            We've analyzed thousands of data points and rigorously tested each model to select the **single best performer** for every health predictor. 
-            
-            You're not just getting *a* prediction — you're getting the **best possible prediction** backed by data science.
-            """
-        )
-    
-    st.markdown("---")
-    
-    st.markdown("### ⚠️ Important Disclaimer")
+    st.markdown("### Important Disclaimer")
     st.error(
         """
         **Medical Advice Notice:**
@@ -684,11 +907,12 @@ if app_mode == "🏠 Home":
 
 # --- HEART ATTACK PREDICTOR PAGE ---
 
-elif app_mode == "❤️ Heart Attack Predictor":
-    st.markdown("# ❤️ Heart Attack Risk Predictor")
-    st.markdown("Our **Custom Random Forest** model will evaluate your risk based on 8 clinical health metrics.")
+elif app_mode == "Heart Attack Predictor":
+    st.markdown("# Heart Attack Risk Predictor")
+    st.markdown("Our Custom Random Forest model will evaluate your risk based on 8 clinical health metrics.")
 
     with st.form("heart_attack_form"):
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 👤 Patient Demographics")
         col1, col2 = st.columns(2)
         with col1:
@@ -696,7 +920,9 @@ elif app_mode == "❤️ Heart Attack Predictor":
         with col2:
             # Your model was trained on 'Gender' which is likely 1 for Male, 0 for Female
             gender = st.selectbox("Gender", (1, 0), format_func=lambda x: "Male" if x == 1 else "Female")
+        st.markdown('</div>', unsafe_allow_html=True)
 
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 🔬 Clinical Measurements")
         
         col1, col2 = st.columns(2)
@@ -710,17 +936,20 @@ elif app_mode == "❤️ Heart Attack Predictor":
             systolic_bp = st.number_input("Systolic Blood Pressure (mm Hg)", min_value=80, max_value=250, value=120, help="The 'top' number.")
         with col2:
             diastolic_bp = st.number_input("Diastolic Blood Pressure (mm Hg)", min_value=40, max_value=150, value=80, help="The 'bottom' number.")
-        
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 🧬 Cardiac Enzyme Markers")
         col1, col2 = st.columns(2)
         with col1:
             ck_mb = st.number_input("CK-MB (ng/mL)", min_value=0.0, max_value=100.0, value=3.0, step=0.1, help="Creatine kinase-MB enzyme level.")
         with col2:
             troponin = st.number_input("Troponin (ng/mL)", min_value=0.0, max_value=10.0, value=0.02, step=0.01, format="%.2f", help="Troponin enzyme level.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
         
-        submitted = st.form_submit_button("🩺 Analyze My Risk")
+        submitted = st.form_submit_button("Analyze My Risk")
 
     if submitted:
         # Check if the model is loaded
@@ -789,11 +1018,12 @@ elif app_mode == "❤️ Heart Attack Predictor":
                 st.error(f"❌ An error occurred during prediction: {e}")
 
 
-elif app_mode == "💪 Body Fat Predictor":
-    st.markdown("# 💪 Body Fat Percentage Predictor")
+elif app_mode == "Body Fat Predictor":
+    st.markdown("# Body Fat Percentage Predictor")
     st.markdown("Calculate your estimated body fat percentage using advanced anthropometric measurements.")
 
     with st.form("body_fat_form"):
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 📏 Basic Measurements")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -802,7 +1032,9 @@ elif app_mode == "💪 Body Fat Predictor":
             weight = st.number_input("Weight (kg)", min_value=30.0, max_value=250.0, value=75.0, step=0.1, format="%.1f")
         with col3:
             height = st.number_input("Height (cm)", min_value=120.0, max_value=250.0, value=175.0, step=0.1, format="%.1f")
+        st.markdown('</div>', unsafe_allow_html=True)
         
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 📐 Body Circumferences (Part 1)")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -820,7 +1052,9 @@ elif app_mode == "💪 Body Fat Predictor":
         with col3:
             # --- [NEW] ADDED MISSING INPUT ---
             knee = st.number_input("Knee (cm)", min_value=25.0, max_value=55.0, value=38.0, step=0.1, format="%.1f")
+        st.markdown('</div>', unsafe_allow_html=True)
 
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 📐 Body Circumferences (Part 2)")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -835,9 +1069,10 @@ elif app_mode == "💪 Body Fat Predictor":
         
         # This one you already had, but I moved it here for logical grouping
         wrist = st.number_input("Wrist (cm)", min_value=12.0, max_value=25.0, value=18.0, step=0.1, format="%.1f")
+        st.markdown('</div>', unsafe_allow_html=True)
         
         
-        submitted = st.form_submit_button("📊 Calculate Body Fat %")
+        submitted = st.form_submit_button("Calculate Body Fat %")
         
         if submitted:
             # Check if model loaded correctly
@@ -890,11 +1125,12 @@ elif app_mode == "💪 Body Fat Predictor":
                     st.error(f"❌ An error occurred during prediction: {e}")
 
 # --- MATERNAL HEALTH PREDICTOR PAGE ---
-elif app_mode == "🤰 Maternal Health Predictor":
-    st.markdown("# 🤰 Maternal Health Risk Predictor")
-    st.markdown("Our **Custom Random Forest** model will evaluate your risk based on 6 key vital signs.")
+elif app_mode == "Maternal Health Predictor":
+    st.markdown("# Maternal Health Risk Predictor")
+    st.markdown("Our Custom Random Forest model will evaluate your risk based on 6 key vital signs.")
 
     with st.form("maternal_health_form"):
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 👤 Patient Vitals")
         
         col1, col2, col3 = st.columns(3)
@@ -912,9 +1148,10 @@ elif app_mode == "🤰 Maternal Health Predictor":
             body_temp_f = st.number_input("Body Temp (°F)", min_value=95.0, max_value=105.0, value=98.0, step=0.1, format="%.1f")
         with col3:
             heart_rate = st.number_input("Heart Rate (bpm)", min_value=50, max_value=120, value=86)
+        st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
-        submitted = st.form_submit_button("🩺 Analyze My Risk")
+        submitted = st.form_submit_button("Analyze My Risk")
 
     if submitted:
         # Check if the model is loaded
@@ -999,9 +1236,9 @@ elif app_mode == "🤰 Maternal Health Predictor":
 
 
 # --- OBESITY LEVEL PREDICTOR PAGE ---
-elif app_mode == "⚖️ Obesity Level Predictor":
-    st.markdown("# ⚖️ Obesity Level Predictor")
-    st.markdown("Our **Custom Decision Tree** model will analyze 16 lifestyle and physical metrics to predict your weight category.")
+elif app_mode == "Obesity Level Predictor":
+    st.markdown("# Obesity Level Predictor")
+    st.markdown("Our Custom Decision Tree model will analyze 16 lifestyle and physical metrics to predict your weight category.")
 
     # These are the 16 features your model was trained on
     COLUMN_ORDER = [
@@ -1017,6 +1254,7 @@ elif app_mode == "⚖️ Obesity Level Predictor":
     ]
 
     with st.form("obesity_form"):
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 👤 Patient Demographics")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1031,7 +1269,9 @@ elif app_mode == "⚖️ Obesity Level Predictor":
             Height = st.number_input("Height (meters)", min_value=1.0, max_value=2.5, value=1.75, step=0.01, format="%.2f")
         with col2:
             Weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=80.0, step=0.1, format="%.1f")
+        st.markdown('</div>', unsafe_allow_html=True)
 
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 🍔 Dietary Habits")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1048,7 +1288,9 @@ elif app_mode == "⚖️ Obesity Level Predictor":
             CALC = st.selectbox("Alcohol Consumption", ('no', 'Sometimes', 'Frequently', 'Always'))
         with col3:
             CH2O = st.slider("Water Consumption (Liters)", 1.0, 3.0, 2.0, 0.5, help="Liters of water per day")
+        st.markdown('</div>', unsafe_allow_html=True)
 
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 🏃 Lifestyle & Activity")
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -1063,9 +1305,10 @@ elif app_mode == "⚖️ Obesity Level Predictor":
             TUE = st.slider("Time Using Tech Devices", 0.0, 2.0, 1.0, 0.5, help="0=0-2h, 1=3-5h, 2=>5h")
         with col2:
             MTRANS = st.selectbox("Primary Transportation", ('Automobile', 'Motorbike', 'Bike', 'Public_Transportation', 'Walking'))
+        st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown("---")
-        submitted = st.form_submit_button("⚖️ Calculate Obesity Level")
+        submitted = st.form_submit_button("Calculate Obesity Level")
 
     if submitted:
         if obesity_model is None:
@@ -1131,7 +1374,7 @@ elif app_mode == "⚖️ Obesity Level Predictor":
 
 # --- GALLSTONE PREDICTOR PAGE ---
 elif app_mode == "🪨 GallStone Predictor":
-    st.markdown("# 🪨 GallStone Risk Predictor")
+    st.markdown("# GallStone Risk Predictor")
     st.markdown("Our **Custom AdaBoost** model will analyze 38 health and body composition metrics to predict gallstone risk.")
 
     # Define the 38 features and their order
@@ -1245,7 +1488,7 @@ elif app_mode == "🪨 GallStone Predictor":
             Hepatic_Fat_Accumulation_HFA = st.selectbox("Hepatic Fat Accumulation", ('None', 'Mild', 'Moderate', 'Severe'))
 
         st.markdown("---")
-        submitted = st.form_submit_button("🪨 Analyze GallStone Risk")
+        submitted = st.form_submit_button("Analyze GallStone Risk")
 
     if submitted:
         if gallstone_model is None:
@@ -1313,7 +1556,7 @@ elif app_mode == "🪨 GallStone Predictor":
 # --- PLACEHOLDER PAGES ---
 # --- DIABETES PREDICTOR PAGE ---
 elif app_mode == "🩸 Diabetes Predictor":
-    st.markdown("# 🩸 Diabetes Risk Predictor")
+    st.markdown("# Diabetes Risk Predictor")
     st.markdown("This predictor analyzes **24 clinical metrics** to assess risk, based on our **Custom Logistic Regression** model.")
 
     # These are the 24 features your model was trained on
@@ -1395,7 +1638,7 @@ elif app_mode == "🩸 Diabetes Predictor":
             ane = st.selectbox("Anemia (ane)", ('no', 'yes'), index=0)
 
         st.markdown("---")
-        submitted = st.form_submit_button("🩺 Analyze My Risk")
+        submitted = st.form_submit_button("Analyze My Risk")
 
     if submitted:
         if diabetes_model_pipeline is None:
@@ -1460,7 +1703,7 @@ elif app_mode == "🩺 Liver Disease Predictor":
 
 # --- KIDNEY DISEASE PREDICTOR PAGE ---
 elif app_mode == "🔬 Kidney Disease Predictor":
-    st.markdown("# 🔬 Chronic Kidney Disease (CKD) Predictor")
+    st.markdown("# Chronic Kidney Disease (CKD) Predictor")
     st.markdown("Our **Custom KNN** model will analyze 24 clinical metrics to predict your risk for CKD.")
 
     # These are the 24 features your model was trained on
@@ -1541,7 +1784,7 @@ elif app_mode == "🔬 Kidney Disease Predictor":
             ane = st.selectbox("Anemia (ane)", ('no', 'yes'), index=0)
 
         st.markdown("---")
-        submitted = st.form_submit_button("🩺 Analyze My Risk")
+        submitted = st.form_submit_button("Analyze My Risk")
 
     if submitted:
         if kidney_model_pipeline is None:
@@ -1601,7 +1844,7 @@ elif app_mode == "🔬 Kidney Disease Predictor":
 
 # --- BRAIN TUMOR PREDICTOR PAGE ---
 elif app_mode == "🧠 Brain Tumor Predictor":
-    st.markdown("# 🧠 Brain Tumor Predictor (MRI)")
+    st.markdown("# Brain Tumor Predictor (MRI)")
     st.markdown("Our **Custom KNN** model will analyze a brain MRI scan to classify the tumor type.")
     st.info("This model uses advanced feature extraction (HOG, GLCM, LBP) on the image provided.")
     
@@ -1624,7 +1867,7 @@ elif app_mode == "🧠 Brain Tumor Predictor":
             temp_image_path = tmp.name
         
         # 4. Create the prediction button
-        if st.button("🧠 Analyze MRI Scan", use_container_width=True):
+        if st.button("Analyze MRI Scan", use_container_width=True):
             # Check if all models loaded
             if not all([bt_model, bt_le, bt_scaler, bt_pca]):
                 st.error("❌ **Model Error:** The Brain Tumor prediction pipeline is not fully loaded. Check server logs.")
