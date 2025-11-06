@@ -6,6 +6,26 @@ import os
 import tempfile
 
 import sys
+import cv2
+from sklearn.preprocessing import LabelEncoder
+
+# Image feature extraction (scikit-image)
+try:
+    from skimage.feature import hog, local_binary_pattern, greycomatrix, greycoprops
+    scikit_image_available = True
+    print("✅ scikit-image features imported successfully.")
+except Exception as e:
+    # fall back names if package not available at import time; errors will surface during runtime
+    scikit_image_available = False
+    hog = None
+    local_binary_pattern = None
+    greycomatrix = None
+    greycoprops = None
+    print(f"❌ scikit-image import failed: {e}")
+
+# Provide American-spelling aliases used elsewhere in the code
+graycomatrix = greycomatrix
+graycoprops = greycoprops
 
 # Define missing classes for pickle compatibility
 class OvRWrapper:
@@ -36,6 +56,62 @@ from BodyFat.RandomForest import RandomForestRegressor, DecisionTreeRegressor, N
 sys.modules['RandomForest'] = sys.modules['BodyFat.RandomForest']
 
 #1----BODY FAT PREDICTOR
+class OvRWrapper:
+    """Wraps a binary classifier to support multi-class OvR classification."""
+    def __init__(self, binary_classifier_class, **kwargs):
+        self.binary_classifier_class = binary_classifier_class
+        self.kwargs = kwargs
+        self.models = {}
+        self.classes_ = None
+
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        self.binary_le = LabelEncoder() # Use 0/1
+        y_binary = self.binary_le.fit_transform(y)
+        model = self.binary_classifier_class(**self.kwargs)
+        model.fit(X, y_binary)
+        self.models[self.binary_le.classes_[1]] = model 
+    
+    def predict(self, X):
+        if hasattr(self, 'binary_le') and self.binary_le:
+             # Binary case
+             model_key = list(self.models.keys())[0]
+             binary_preds = self.models[model_key].predict(X)
+             return self.binary_le.inverse_transform(binary_preds)
+        else:
+            # Multi-class OvR case
+            all_scores = []
+            for cls in self.classes_:
+                model = self.models[cls]
+                if hasattr(model, 'predict_proba'):
+                    probas = model.predict_proba(X)
+                    all_scores.append(probas[:, 1] if probas.ndim == 2 and probas.shape[1] == 2 else probas)
+                elif hasattr(model, 'decision_function'):
+                    all_scores.append(model.decision_function(X))
+                else:
+                    all_scores.append(model.predict(X))
+            
+            scores_matrix = np.stack(all_scores, axis=1)
+            best_class_indices = np.argmax(scores_matrix, axis=1)
+            return self.classes_[best_class_indices]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 @st.cache_resource
 def load_body_fat_model():
@@ -165,6 +241,8 @@ def obesity_model_loader():
         st.error(f"❌ An error occurred while loading the file: {e}")
         return None
 
+
+
 @st.cache_resource
 def gallstone_model_loader():
     model_path = os.path.join('GallStone', 'gallstone_adaboost_model.pkl')
@@ -179,6 +257,8 @@ def gallstone_model_loader():
     except Exception as e:
         st.error(f"❌ An error occurred while loading the file: {e}")
         return None     
+
+
 
 @st.cache_resource
 def load_kidney_disease_model():
@@ -210,6 +290,8 @@ def load_diabetes_model():
 
 @st.cache_data
 def extract_hog(img):
+    if hog is None:
+        raise ImportError("scikit-image is required for HOG feature extraction. Install it with `pip install scikit-image`.")
     hog_features, _ = hog(img, orientations=9, pixels_per_cell=(8, 8),
                           cells_per_block=(2, 2), block_norm='L2-Hys',
                           visualize=True, transform_sqrt=True)
@@ -217,6 +299,8 @@ def extract_hog(img):
 
 @st.cache_data
 def extract_glcm_features(img):
+    if graycomatrix is None or graycoprops is None:
+        raise ImportError("scikit-image is required for GLCM feature extraction. Install it with `pip install scikit-image`.")
     glcm = graycomatrix(img, distances=[5], angles=[0], levels=256, symmetric=True, normed=True)
     features = [
         graycoprops(glcm, 'contrast')[0, 0],
@@ -229,6 +313,8 @@ def extract_glcm_features(img):
 
 @st.cache_data
 def extract_lbp_features(img):
+    if local_binary_pattern is None:
+        raise ImportError("scikit-image is required for LBP feature extraction. Install it with `pip install scikit-image`.")
     lbp = local_binary_pattern(img, P=8, R=1, method='uniform')
     (hist, _) = np.histogram(lbp.ravel(),
                              bins=np.arange(0, 10),
@@ -254,11 +340,19 @@ def extract_features_from_image(img_path):
         return None
     
     img = cv2.resize(img, (128, 128))
-
-    hog_f = extract_hog(img)
-    glcm_f = extract_glcm_features(img)
-    lbp_f = extract_lbp_features(img)
-    stat_f = extract_statistical_features(img)
+    try:
+        hog_f = extract_hog(img)
+        glcm_f = extract_glcm_features(img)
+        lbp_f = extract_lbp_features(img)
+        stat_f = extract_statistical_features(img)
+    except ImportError as ie:
+        # Provide a clear message in the Streamlit UI when required packages are missing
+        st.error(f"❌ Image feature extraction failed: {ie}")
+        return None
+    except Exception as e:
+        # Other unexpected errors during feature extraction
+        st.error(f"❌ An unexpected error occurred while extracting image features: {e}")
+        return None
 
     combined = np.hstack([hog_f, glcm_f, lbp_f, stat_f])
     return combined
@@ -911,15 +1005,42 @@ elif app_mode == "Heart Attack Predictor":
     st.markdown("# Heart Attack Risk Predictor")
     st.markdown("Our Custom Random Forest model will evaluate your risk based on 8 clinical health metrics.")
 
+    # --- Prefill sample buttons ---
+    st.markdown("### Quick samples")
+    btn_col1, btn_col2, _ = st.columns([1, 1, 6])
+
+    # Sample rows provided by the user:
+    # Sample 1: 64,1,66,160,83,160,1.8,0.012,negative
+    # Sample 2: 21,1,94,98,46,296,6.75,1.06,positive
+    if btn_col1.button("Load Sample 1"):
+        st.session_state['ha_age'] = 64
+        st.session_state['ha_gender'] = 1
+        st.session_state['ha_heart_rate'] = 66
+        st.session_state['ha_systolic'] = 160
+        st.session_state['ha_diastolic'] = 83
+        st.session_state['ha_blood_sugar'] = 160.0
+        st.session_state['ha_ck_mb'] = 1.8
+        st.session_state['ha_troponin'] = 0.012
+
+    if btn_col2.button("Load Sample 2"):
+        st.session_state['ha_age'] = 21
+        st.session_state['ha_gender'] = 1
+        st.session_state['ha_heart_rate'] = 94
+        st.session_state['ha_systolic'] = 98
+        st.session_state['ha_diastolic'] = 46
+        st.session_state['ha_blood_sugar'] = 296.0
+        st.session_state['ha_ck_mb'] = 6.75
+        st.session_state['ha_troponin'] = 1.06
+
     with st.form("heart_attack_form"):
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 👤 Patient Demographics")
         col1, col2 = st.columns(2)
         with col1:
-            age = st.number_input("Age (years)", min_value=1, max_value=120, value=50)
+            age = st.number_input("Age (years)", min_value=1, max_value=120, value=st.session_state.get('ha_age', 50), key='ha_age')
         with col2:
             # Your model was trained on 'Gender' which is likely 1 for Male, 0 for Female
-            gender = st.selectbox("Gender", (1, 0), format_func=lambda x: "Male" if x == 1 else "Female")
+            gender = st.selectbox("Gender", (1, 0), format_func=lambda x: "Male" if x == 1 else "Female", index=0 if st.session_state.get('ha_gender', 1)==1 else 1, key='ha_gender')
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
@@ -927,24 +1048,24 @@ elif app_mode == "Heart Attack Predictor":
         
         col1, col2 = st.columns(2)
         with col1:
-            heart_rate = st.number_input("Heart Rate (bpm)", min_value=40, max_value=220, value=75, help="Average beats per minute.")
+            heart_rate = st.number_input("Heart Rate (bpm)", min_value=40, max_value=220, value=st.session_state.get('ha_heart_rate', 75), help="Average beats per minute.", key='ha_heart_rate')
         with col2:
-            blood_sugar = st.number_input("Blood Sugar (mg/dL)", min_value=50.0, max_value=500.0, value=100.0, step=0.1, help="Fasting blood glucose level.")
+            blood_sugar = st.number_input("Blood Sugar (mg/dL)", min_value=50.0, max_value=500.0, value=st.session_state.get('ha_blood_sugar', 100.0), step=0.1, help="Fasting blood glucose level.", key='ha_blood_sugar')
         
         col1, col2 = st.columns(2)
         with col1:
-            systolic_bp = st.number_input("Systolic Blood Pressure (mm Hg)", min_value=80, max_value=250, value=120, help="The 'top' number.")
+            systolic_bp = st.number_input("Systolic Blood Pressure (mm Hg)", min_value=80, max_value=250, value=st.session_state.get('ha_systolic', 120), help="The 'top' number.", key='ha_systolic')
         with col2:
-            diastolic_bp = st.number_input("Diastolic Blood Pressure (mm Hg)", min_value=40, max_value=150, value=80, help="The 'bottom' number.")
+            diastolic_bp = st.number_input("Diastolic Blood Pressure (mm Hg)", min_value=40, max_value=150, value=st.session_state.get('ha_diastolic', 80), help="The 'bottom' number.", key='ha_diastolic')
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 🧬 Cardiac Enzyme Markers")
         col1, col2 = st.columns(2)
         with col1:
-            ck_mb = st.number_input("CK-MB (ng/mL)", min_value=0.0, max_value=100.0, value=3.0, step=0.1, help="Creatine kinase-MB enzyme level.")
+            ck_mb = st.number_input("CK-MB (ng/mL)", min_value=0.0, max_value=100.0, value=st.session_state.get('ha_ck_mb', 3.0), step=0.1, help="Creatine kinase-MB enzyme level.", key='ha_ck_mb')
         with col2:
-            troponin = st.number_input("Troponin (ng/mL)", min_value=0.0, max_value=10.0, value=0.02, step=0.01, format="%.2f", help="Troponin enzyme level.")
+            troponin = st.number_input("Troponin (ng/mL)", min_value=0.0, max_value=10.0, value=st.session_state.get('ha_troponin', 0.02), step=0.01, format="%.3f", help="Troponin enzyme level.", key='ha_troponin')
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
@@ -1022,36 +1143,75 @@ elif app_mode == "Body Fat Predictor":
     st.markdown("# Body Fat Percentage Predictor")
     st.markdown("Calculate your estimated body fat percentage using advanced anthropometric measurements.")
 
+    # --- Prefill sample buttons for Body Fat ---
+    st.markdown("### Quick samples")
+    btn_col1, btn_col2, _ = st.columns([1, 1, 6])
+
+    # Sample data provided by user
+    # Sample 1: [30,160.0,70.0,37.0,95.0,88.0,96.0,58.0,38.0,22.0,33.0,29.0,18.0]
+    # Sample 2: [45,185.0,68.0,40.0,105.0,100.0,104.0,62.0,40.0,24.0,35.0,31.0,19.0]
+    if btn_col1.button("Load Sample 1"):
+        st.session_state['bf_age'] = 30
+        st.session_state['bf_weight'] = 160.0
+        # Height was provided in inches (70). Convert to cm for the widget (70 in -> 177.8 cm)
+        st.session_state['bf_height'] = 177.8
+        st.session_state['bf_neck'] = 37.0
+        st.session_state['bf_chest'] = 95.0
+        st.session_state['bf_abdomen'] = 88.0
+        st.session_state['bf_hip'] = 96.0
+        st.session_state['bf_thigh'] = 58.0
+        st.session_state['bf_knee'] = 38.0
+        st.session_state['bf_ankle'] = 22.0
+        st.session_state['bf_biceps'] = 33.0
+        st.session_state['bf_forearm'] = 29.0
+        st.session_state['bf_wrist'] = 18.0
+
+    if btn_col2.button("Load Sample 2"):
+        st.session_state['bf_age'] = 45
+        st.session_state['bf_weight'] = 185.0
+        # Height in inches (68). Convert to cm (68 in -> 172.7 cm)
+        st.session_state['bf_height'] = 172.7
+        st.session_state['bf_neck'] = 40.0
+        st.session_state['bf_chest'] = 105.0
+        st.session_state['bf_abdomen'] = 100.0
+        st.session_state['bf_hip'] = 104.0
+        st.session_state['bf_thigh'] = 62.0
+        st.session_state['bf_knee'] = 40.0
+        st.session_state['bf_ankle'] = 24.0
+        st.session_state['bf_biceps'] = 35.0
+        st.session_state['bf_forearm'] = 31.0
+        st.session_state['bf_wrist'] = 19.0
+
     with st.form("body_fat_form"):
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 📏 Basic Measurements")
         col1, col2, col3 = st.columns(3)
         with col1:
-            age = st.number_input("Age (years)", min_value=18, max_value=100, value=30)
+            age = st.number_input("Age (years)", min_value=18, max_value=100, value=st.session_state.get('bf_age', 30), key='bf_age')
         with col2:
-            weight = st.number_input("Weight (kg)", min_value=30.0, max_value=250.0, value=75.0, step=0.1, format="%.1f")
+            weight = st.number_input("Weight (kg)", min_value=30.0, max_value=250.0, value=st.session_state.get('bf_weight', 75.0), step=0.1, format="%.1f", key='bf_weight')
         with col3:
-            height = st.number_input("Height (cm)", min_value=120.0, max_value=250.0, value=175.0, step=0.1, format="%.1f")
+            height = st.number_input("Height (cm)", min_value=120.0, max_value=250.0, value=st.session_state.get('bf_height', 175.0), step=0.1, format="%.1f", key='bf_height')
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 📐 Body Circumferences (Part 1)")
         col1, col2, col3 = st.columns(3)
         with col1:
-            neck = st.number_input("Neck (cm)", min_value=20.0, max_value=60.0, value=38.0, step=0.1, format="%.1f")
+            neck = st.number_input("Neck (cm)", min_value=20.0, max_value=60.0, value=st.session_state.get('bf_neck', 38.0), step=0.1, format="%.1f", key='bf_neck')
         with col2:
-            chest = st.number_input("Chest (cm)", min_value=60.0, max_value=150.0, value=100.0, step=0.1, format="%.1f")
+            chest = st.number_input("Chest (cm)", min_value=60.0, max_value=150.0, value=st.session_state.get('bf_chest', 100.0), step=0.1, format="%.1f", key='bf_chest')
         with col3:
-            abdomen = st.number_input("Abdomen (cm)", min_value=50.0, max_value=180.0, value=90.0, step=0.1, format="%.1f")
+            abdomen = st.number_input("Abdomen (cm)", min_value=50.0, max_value=180.0, value=st.session_state.get('bf_abdomen', 90.0), step=0.1, format="%.1f", key='bf_abdomen')
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            hip = st.number_input("Hip (cm)", min_value=60.0, max_value=160.0, value=100.0, step=0.1, format="%.1f")
+            hip = st.number_input("Hip (cm)", min_value=60.0, max_value=160.0, value=st.session_state.get('bf_hip', 100.0), step=0.1, format="%.1f", key='bf_hip')
         with col2:
-            thigh = st.number_input("Thigh (cm)", min_value=30.0, max_value=100.0, value=60.0, step=0.1, format="%.1f")
+            thigh = st.number_input("Thigh (cm)", min_value=30.0, max_value=100.0, value=st.session_state.get('bf_thigh', 60.0), step=0.1, format="%.1f", key='bf_thigh')
         with col3:
             # --- [NEW] ADDED MISSING INPUT ---
-            knee = st.number_input("Knee (cm)", min_value=25.0, max_value=55.0, value=38.0, step=0.1, format="%.1f")
+            knee = st.number_input("Knee (cm)", min_value=25.0, max_value=55.0, value=st.session_state.get('bf_knee', 38.0), step=0.1, format="%.1f", key='bf_knee')
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
@@ -1059,16 +1219,16 @@ elif app_mode == "Body Fat Predictor":
         col1, col2, col3 = st.columns(3)
         with col1:
             # --- [NEW] ADDED MISSING INPUT ---
-            ankle = st.number_input("Ankle (cm)", min_value=15.0, max_value=35.0, value=22.0, step=0.1, format="%.1f")
+            ankle = st.number_input("Ankle (cm)", min_value=15.0, max_value=35.0, value=st.session_state.get('bf_ankle', 22.0), step=0.1, format="%.1f", key='bf_ankle')
         with col2:
             # --- [NEW] ADDED MISSING INPUT ---
-            biceps = st.number_input("Biceps (flexed, cm)", min_value=20.0, max_value=50.0, value=33.0, step=0.1, format="%.1f")
+            biceps = st.number_input("Biceps (flexed, cm)", min_value=20.0, max_value=50.0, value=st.session_state.get('bf_biceps', 33.0), step=0.1, format="%.1f", key='bf_biceps')
         with col3:
             # --- [NEW] ADDED MISSING INPUT ---
-            forearm = st.number_input("Forearm (cm)", min_value=20.0, max_value=40.0, value=29.0, step=0.1, format="%.1f")
+            forearm = st.number_input("Forearm (cm)", min_value=20.0, max_value=40.0, value=st.session_state.get('bf_forearm', 29.0), step=0.1, format="%.1f", key='bf_forearm')
         
         # This one you already had, but I moved it here for logical grouping
-        wrist = st.number_input("Wrist (cm)", min_value=12.0, max_value=25.0, value=18.0, step=0.1, format="%.1f")
+        wrist = st.number_input("Wrist (cm)", min_value=12.0, max_value=25.0, value=st.session_state.get('bf_wrist', 18.0), step=0.1, format="%.1f", key='bf_wrist')
         st.markdown('</div>', unsafe_allow_html=True)
         
         
@@ -1129,25 +1289,47 @@ elif app_mode == "Maternal Health Predictor":
     st.markdown("# Maternal Health Risk Predictor")
     st.markdown("Our Custom Random Forest model will evaluate your risk based on 6 key vital signs.")
 
+    # --- Prefill sample buttons for Maternal Health ---
+    st.markdown("### Quick samples")
+    btn_col1, btn_col2, _ = st.columns([1, 1, 6])
+
+    # Sample 1: 25,130,80,15,98,86 (high risk)
+    # Sample 2: 35,120,60,6.1,98,76 (low risk)
+    if btn_col1.button("Load Sample 1"):
+        st.session_state['mh_age'] = 25
+        st.session_state['mh_systolic'] = 130
+        st.session_state['mh_diastolic'] = 80
+        st.session_state['mh_bs'] = 15.0
+        st.session_state['mh_body_temp'] = 98.0
+        st.session_state['mh_heart_rate'] = 86
+
+    if btn_col2.button("Load Sample 2"):
+        st.session_state['mh_age'] = 35
+        st.session_state['mh_systolic'] = 120
+        st.session_state['mh_diastolic'] = 60
+        st.session_state['mh_bs'] = 6.1
+        st.session_state['mh_body_temp'] = 98.0
+        st.session_state['mh_heart_rate'] = 76
+
     with st.form("maternal_health_form"):
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 👤 Patient Vitals")
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            age = st.number_input("Age (years)", min_value=10, max_value=70, value=25)
+            age = st.number_input("Age (years)", min_value=10, max_value=70, value=st.session_state.get('mh_age', 25), key='mh_age')
         with col2:
-            systolic_bp = st.number_input("Systolic BP (mm Hg)", min_value=70, max_value=200, value=130)
+            systolic_bp = st.number_input("Systolic BP (mm Hg)", min_value=70, max_value=200, value=st.session_state.get('mh_systolic', 130), key='mh_systolic')
         with col3:
-            diastolic_bp = st.number_input("Diastolic BP (mm Hg)", min_value=40, max_value=120, value=80)
+            diastolic_bp = st.number_input("Diastolic BP (mm Hg)", min_value=40, max_value=120, value=st.session_state.get('mh_diastolic', 80), key='mh_diastolic')
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            bs = st.number_input("Blood Sugar (BS) (mmol/L)", min_value=3.0, max_value=20.0, value=15.0, step=0.1, format="%.1f")
+            bs = st.number_input("Blood Sugar (BS) (mmol/L)", min_value=3.0, max_value=20.0, value=st.session_state.get('mh_bs', 15.0), step=0.1, format="%.1f", key='mh_bs')
         with col2:
-            body_temp_f = st.number_input("Body Temp (°F)", min_value=95.0, max_value=105.0, value=98.0, step=0.1, format="%.1f")
+            body_temp_f = st.number_input("Body Temp (°F)", min_value=95.0, max_value=105.0, value=st.session_state.get('mh_body_temp', 98.0), step=0.1, format="%.1f", key='mh_body_temp')
         with col3:
-            heart_rate = st.number_input("Heart Rate (bpm)", min_value=50, max_value=120, value=86)
+            heart_rate = st.number_input("Heart Rate (bpm)", min_value=50, max_value=120, value=st.session_state.get('mh_heart_rate', 86), key='mh_heart_rate')
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
@@ -1253,58 +1435,100 @@ elif app_mode == "Obesity Level Predictor":
         'Overweight_Level_II'
     ]
 
+    # --- Prefill sample buttons for Obesity Level ---
+    st.markdown("### Quick samples")
+    btn_col1, btn_col2, _ = st.columns([1,1,6])
+
+    # Sample 1 (Normal_Weight): Female,21,1.62,64,yes,no,2,3,Sometimes,no,2,no,0,1,no,Public_Transportation
+    if btn_col1.button("Load Sample 1"):
+        st.session_state['ob_gender'] = 'Female'
+        st.session_state['ob_age'] = 21.0
+        st.session_state['ob_height'] = 1.62
+        st.session_state['ob_weight'] = 64.0
+        st.session_state['ob_family_history'] = 'yes'
+        st.session_state['ob_favc'] = 'no'
+        st.session_state['ob_fcvc'] = 2.0
+        st.session_state['ob_ncp'] = 3.0
+        st.session_state['ob_caec'] = 'Sometimes'
+        st.session_state['ob_smoke'] = 'no'
+        st.session_state['ob_ch2o'] = 2.0
+        st.session_state['ob_scc'] = 'no'
+        st.session_state['ob_faf'] = 0.0
+        st.session_state['ob_tue'] = 1.0
+        st.session_state['ob_calc'] = 'no'
+        st.session_state['ob_mtrans'] = 'Public_Transportation'
+
+    # Sample 2 (Overweight_Level_II): Male,22,1.78,89.8,no,no,2,1,Sometimes,no,2,no,0,0,Sometimes,Public_Transportation
+    if btn_col2.button("Load Sample 2"):
+        st.session_state['ob_gender'] = 'Male'
+        st.session_state['ob_age'] = 22.0
+        st.session_state['ob_height'] = 1.78
+        st.session_state['ob_weight'] = 89.8
+        st.session_state['ob_family_history'] = 'no'
+        st.session_state['ob_favc'] = 'no'
+        st.session_state['ob_fcvc'] = 2.0
+        st.session_state['ob_ncp'] = 1.0
+        st.session_state['ob_caec'] = 'Sometimes'
+        st.session_state['ob_smoke'] = 'no'
+        st.session_state['ob_ch2o'] = 2.0
+        st.session_state['ob_scc'] = 'no'
+        st.session_state['ob_faf'] = 0.0
+        st.session_state['ob_tue'] = 0.0
+        st.session_state['ob_calc'] = 'Sometimes'
+        st.session_state['ob_mtrans'] = 'Public_Transportation'
+
     with st.form("obesity_form"):
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 👤 Patient Demographics")
         col1, col2, col3 = st.columns(3)
         with col1:
-            Age = st.number_input("Age", min_value=1.0, max_value=100.0, value=25.0, step=1.0)
+            Age = st.number_input("Age", min_value=1.0, max_value=100.0, value=st.session_state.get('ob_age', 25.0), step=1.0, key='ob_age')
         with col2:
-            Gender = st.selectbox("Gender", ('Male', 'Female'))
+            Gender = st.selectbox("Gender", ('Male', 'Female'), index=0 if st.session_state.get('ob_gender','Male')=='Male' else 1, key='ob_gender')
         with col3:
-            family_history_with_overweight = st.selectbox("Family History of Overweight?", ('yes', 'no'))
+            family_history_with_overweight = st.selectbox("Family History of Overweight?", ('yes', 'no'), index=0 if st.session_state.get('ob_family_history','yes')=='yes' else 1, key='ob_family_history')
 
         col1, col2 = st.columns(2)
         with col1:
-            Height = st.number_input("Height (meters)", min_value=1.0, max_value=2.5, value=1.75, step=0.01, format="%.2f")
+            Height = st.number_input("Height (meters)", min_value=1.0, max_value=2.5, value=st.session_state.get('ob_height', 1.75), step=0.01, format="%.2f", key='ob_height')
         with col2:
-            Weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=80.0, step=0.1, format="%.1f")
+            Weight = st.number_input("Weight (kg)", min_value=20.0, max_value=200.0, value=st.session_state.get('ob_weight', 80.0), step=0.1, format="%.1f", key='ob_weight')
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 🍔 Dietary Habits")
         col1, col2, col3 = st.columns(3)
         with col1:
-            FAVC = st.selectbox("Frequent High Caloric Food?", ('yes', 'no'), help="Do you frequently eat high caloric food?")
+            FAVC = st.selectbox("Frequent High Caloric Food?", ('yes', 'no'), index=0 if st.session_state.get('ob_favc','yes')=='yes' else 1, help="Do you frequently eat high caloric food?", key='ob_favc')
         with col2:
-            FCVC = st.slider("Vegetable Consumption", 1.0, 3.0, 2.0, 1.0, help="1=Never, 2=Sometimes, 3=Always")
+            FCVC = st.slider("Vegetable Consumption", 1.0, 3.0, value=st.session_state.get('ob_fcvc', 2.0), step=1.0, help="1=Never, 2=Sometimes, 3=Always", key='ob_fcvc')
         with col3:
-            NCP = st.slider("Number of Main Meals", 1.0, 4.0, 3.0, 1.0, help="Number of main meals per day")
+            NCP = st.slider("Number of Main Meals", 1.0, 4.0, value=st.session_state.get('ob_ncp', 3.0), step=1.0, help="Number of main meals per day", key='ob_ncp')
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            CAEC = st.selectbox("Food Between Meals", ('No', 'Sometimes', 'Frequently', 'Always'))
+            CAEC = st.selectbox("Food Between Meals", ('No', 'Sometimes', 'Frequently', 'Always'), index=0 if st.session_state.get('ob_caec','No')=='No' else (1 if st.session_state.get('ob_caec')=='Sometimes' else (2 if st.session_state.get('ob_caec')=='Frequently' else 3)), key='ob_caec')
         with col2:
-            CALC = st.selectbox("Alcohol Consumption", ('no', 'Sometimes', 'Frequently', 'Always'))
+            CALC = st.selectbox("Alcohol Consumption", ('no', 'Sometimes', 'Frequently', 'Always'), index=0 if st.session_state.get('ob_calc','no')=='no' else (1 if st.session_state.get('ob_calc')=='Sometimes' else (2 if st.session_state.get('ob_calc')=='Frequently' else 3)), key='ob_calc')
         with col3:
-            CH2O = st.slider("Water Consumption (Liters)", 1.0, 3.0, 2.0, 0.5, help="Liters of water per day")
+            CH2O = st.slider("Water Consumption (Liters)", 1.0, 3.0, value=st.session_state.get('ob_ch2o', 2.0), step=0.5, help="Liters of water per day", key='ob_ch2o')
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="form-section">', unsafe_allow_html=True)
         st.markdown("### 🏃 Lifestyle & Activity")
         col1, col2, col3 = st.columns(3)
         with col1:
-            SMOKE = st.selectbox("Do you smoke?", ('yes', 'no'))
+            SMOKE = st.selectbox("Do you smoke?", ('yes', 'no'), index=0 if st.session_state.get('ob_smoke','yes')=='yes' else 1, key='ob_smoke')
         with col2:
-            SCC = st.selectbox("Monitor Calorie Intake?", ('yes', 'no'), help="Do you monitor calories?")
+            SCC = st.selectbox("Monitor Calorie Intake?", ('yes', 'no'), index=0 if st.session_state.get('ob_scc','yes')=='yes' else 1, help="Do you monitor calories?", key='ob_scc')
         with col3:
-            FAF = st.slider("Physical Activity Frequency", 0.0, 3.0, 1.0, 0.5, help="Days per week. 0=None, 3=Often")
+            FAF = st.slider("Physical Activity Frequency", 0.0, 3.0, value=st.session_state.get('ob_faf', 1.0), step=0.5, help="Days per week. 0=None, 3=Often", key='ob_faf')
         
         col1, col2 = st.columns(2)
         with col1:
-            TUE = st.slider("Time Using Tech Devices", 0.0, 2.0, 1.0, 0.5, help="0=0-2h, 1=3-5h, 2=>5h")
+            TUE = st.slider("Time Using Tech Devices", 0.0, 2.0, value=st.session_state.get('ob_tue', 1.0), step=0.5, help="0=0-2h, 1=3-5h, 2=>5h", key='ob_tue')
         with col2:
-            MTRANS = st.selectbox("Primary Transportation", ('Automobile', 'Motorbike', 'Bike', 'Public_Transportation', 'Walking'))
+            MTRANS = st.selectbox("Primary Transportation", ('Automobile', 'Motorbike', 'Bike', 'Public_Transportation', 'Walking'), index=0 if st.session_state.get('ob_mtrans','Automobile')=='Automobile' else (1 if st.session_state.get('ob_mtrans')=='Motorbike' else (2 if st.session_state.get('ob_mtrans')=='Bike' else (3 if st.session_state.get('ob_mtrans')=='Public_Transportation' else 4))), key='ob_mtrans')
         st.markdown('</div>', unsafe_allow_html=True)
         
         st.markdown("---")
@@ -1373,7 +1597,7 @@ elif app_mode == "Obesity Level Predictor":
 
 
 # --- GALLSTONE PREDICTOR PAGE ---
-elif app_mode == "🪨 GallStone Predictor":
+elif app_mode == "GallStone Predictor":
     st.markdown("# GallStone Risk Predictor")
     st.markdown("Our **Custom AdaBoost** model will analyze 38 health and body composition metrics to predict gallstone risk.")
 
@@ -1392,100 +1616,184 @@ elif app_mode == "🪨 GallStone Predictor":
         'Diabetes_Mellitus_DM', 'Comorbidity', 'Hepatic_Fat_Accumulation_HFA'
     ]
 
+    # --- Prefill sample buttons for GallStone Predictor ---
+    st.markdown("### Quick samples")
+    btn_col1, btn_col2, _ = st.columns([1,1,6])
+
+    # Sample 1: older, overweight, female (likely high risk)
+    if btn_col1.button("Load Sample 1"):
+        st.session_state['gs_Age'] = 58
+        st.session_state['gs_Gender'] = 'Female'
+        st.session_state['gs_Height'] = 160.5
+        st.session_state['gs_Weight'] = 78.2
+        st.session_state['gs_Body_Mass_Index_BMI'] = 30.4
+        st.session_state['gs_Total_Body_Water_TBW'] = 28.5
+        st.session_state['gs_Extracellular_Water_ECW'] = 12.8
+        st.session_state['gs_Intracellular_Water_ICW'] = 15.7
+        st.session_state['gs_Total_Body_Fat_Ratio_TBFR'] = 38.2
+        st.session_state['gs_Lean_Mass_LM'] = 48.3
+        st.session_state['gs_Body_Protein_Content_Protein'] = 9.2
+        st.session_state['gs_Visceral_Fat_Rating_VFR'] = 12
+        st.session_state['gs_Bone_Mass_BM'] = 2.1
+        st.session_state['gs_Muscle_Mass_MM'] = 46.2
+        st.session_state['gs_Obesity'] = 1
+        st.session_state['gs_Total_Fat_Content_TFC'] = 29.9
+        st.session_state['gs_Visceral_Fat_Area_VFA'] = 95.6
+        st.session_state['gs_Visceral_Muscle_Area_VMA_Kg'] = 42.1
+        st.session_state['gs_Glucose'] = 125.0
+        st.session_state['gs_Total_Cholesterol_TC'] = 245.0
+        st.session_state['gs_Low_Density_Lipoprotein_LDL'] = 145.0
+        st.session_state['gs_High_Density_Lipoprotein_HDL'] = 35.0
+        st.session_state['gs_Triglyceride'] = 180.0
+        st.session_state['gs_Aspartat_Aminotransferaz_AST'] = 45.0
+        st.session_state['gs_Alanin_Aminotransferaz_ALT'] = 52.0
+        st.session_state['gs_Alkaline_Phosphatase_ALP'] = 125.0
+        st.session_state['gs_Creatinine'] = 0.9
+        st.session_state['gs_Glomerular_Filtration_Rate_GFR'] = 75.0
+        st.session_state['gs_C_Reactive_Protein_CRP'] = 3.2
+        st.session_state['gs_Hemoglobin_HGB'] = 12.5
+        st.session_state['gs_Vitamin_D'] = 18.0
+        st.session_state['gs_Coronary_Artery_Disease_CAD'] = 0
+        st.session_state['gs_Hypothyroidism'] = 1
+        st.session_state['gs_Hyperlipidemia'] = 1
+        st.session_state['gs_Diabetes_Mellitus_DM'] = 1
+        st.session_state['gs_Comorbidity'] = 'Yes'
+        st.session_state['gs_Hepatic_Fat_Accumulation_HFA'] = 'Moderate'
+
+    # Sample 2: younger, healthy weight, male (low risk)
+    if btn_col2.button("Load Sample 2"):
+        st.session_state['gs_Age'] = 28
+        st.session_state['gs_Gender'] = 'Male'
+        st.session_state['gs_Height'] = 175.0
+        st.session_state['gs_Weight'] = 72.0
+        st.session_state['gs_Body_Mass_Index_BMI'] = 23.5
+        st.session_state['gs_Total_Body_Water_TBW'] = 42.1
+        st.session_state['gs_Extracellular_Water_ECW'] = 16.8
+        st.session_state['gs_Intracellular_Water_ICW'] = 25.3
+        st.session_state['gs_Total_Body_Fat_Ratio_TBFR'] = 15.2
+        st.session_state['gs_Lean_Mass_LM'] = 61.0
+        st.session_state['gs_Body_Protein_Content_Protein'] = 11.8
+        st.session_state['gs_Visceral_Fat_Rating_VFR'] = 4
+        st.session_state['gs_Bone_Mass_BM'] = 3.1
+        st.session_state['gs_Muscle_Mass_MM'] = 57.9
+        st.session_state['gs_Obesity'] = 0
+        st.session_state['gs_Total_Fat_Content_TFC'] = 10.9
+        st.session_state['gs_Visceral_Fat_Area_VFA'] = 35.2
+        st.session_state['gs_Visceral_Muscle_Area_VMA_Kg'] = 55.7
+        st.session_state['gs_Glucose'] = 88.0
+        st.session_state['gs_Total_Cholesterol_TC'] = 165.0
+        st.session_state['gs_Low_Density_Lipoprotein_LDL'] = 95.0
+        st.session_state['gs_High_Density_Lipoprotein_HDL'] = 55.0
+        st.session_state['gs_Triglyceride'] = 75.0
+        st.session_state['gs_Aspartat_Aminotransferaz_AST'] = 22.0
+        st.session_state['gs_Alanin_Aminotransferaz_ALT'] = 18.0
+        st.session_state['gs_Alkaline_Phosphatase_ALP'] = 68.0
+        st.session_state['gs_Creatinine'] = 0.8
+        st.session_state['gs_Glomerular_Filtration_Rate_GFR'] = 110.0
+        st.session_state['gs_C_Reactive_Protein_CRP'] = 0.5
+        st.session_state['gs_Hemoglobin_HGB'] = 15.2
+        st.session_state['gs_Vitamin_D'] = 32.0
+        st.session_state['gs_Coronary_Artery_Disease_CAD'] = 0
+        st.session_state['gs_Hypothyroidism'] = 0
+        st.session_state['gs_Hyperlipidemia'] = 0
+        st.session_state['gs_Diabetes_Mellitus_DM'] = 0
+        st.session_state['gs_Comorbidity'] = 'No'
+        st.session_state['gs_Hepatic_Fat_Accumulation_HFA'] = 'None'
+
     with st.form("gallstone_form"):
         st.markdown("### 👤 Patient Demographics")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            Age = st.number_input("Age", min_value=1, max_value=120, value=50)
+            Age = st.number_input("Age", min_value=1, max_value=120, value=st.session_state.get('gs_Age', 50), key='gs_Age')
         with col2:
-            Gender = st.selectbox("Gender", ('Male', 'Female'))
+            Gender = st.selectbox("Gender", ('Male', 'Female'), index=0 if st.session_state.get('gs_Gender','Male')=='Male' else 1, key='gs_Gender')
         with col3:
-            Height = st.number_input("Height (cm)", min_value=100.0, max_value=250.0, value=165.0, step=0.1)
+            Height = st.number_input("Height (cm)", min_value=100.0, max_value=250.0, value=st.session_state.get('gs_Height', 165.0), step=0.1, key='gs_Height')
         with col4:
-            Weight = st.number_input("Weight (kg)", min_value=30.0, max_value=200.0, value=75.0, step=0.1)
+            Weight = st.number_input("Weight (kg)", min_value=30.0, max_value=200.0, value=st.session_state.get('gs_Weight', 75.0), step=0.1, key='gs_Weight')
         
         st.markdown("### 📊 Body Composition")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            Body_Mass_Index_BMI = st.number_input("BMI", min_value=10.0, max_value=60.0, value=28.0, step=0.1)
+            Body_Mass_Index_BMI = st.number_input("BMI", min_value=10.0, max_value=60.0, value=st.session_state.get('gs_Body_Mass_Index_BMI', 28.0), step=0.1, key='gs_Body_Mass_Index_BMI')
         with col2:
-            Total_Body_Water_TBW = st.number_input("Total Body Water (TBW)", value=30.0, step=0.1)
+            Total_Body_Water_TBW = st.number_input("Total Body Water (TBW)", value=st.session_state.get('gs_Total_Body_Water_TBW', 30.0), step=0.1, key='gs_Total_Body_Water_TBW')
         with col3:
-            Extracellular_Water_ECW = st.number_input("Extracellular Water (ECW)", value=12.0, step=0.1)
+            Extracellular_Water_ECW = st.number_input("Extracellular Water (ECW)", value=st.session_state.get('gs_Extracellular_Water_ECW', 12.0), step=0.1, key='gs_Extracellular_Water_ECW')
         with col4:
-            Intracellular_Water_ICW = st.number_input("Intracellular Water (ICW)", value=18.0, step=0.1)
+            Intracellular_Water_ICW = st.number_input("Intracellular Water (ICW)", value=st.session_state.get('gs_Intracellular_Water_ICW', 18.0), step=0.1, key='gs_Intracellular_Water_ICW')
 
         with col1:
-            Total_Body_Fat_Ratio_TBFR = st.number_input("Total Body Fat Ratio (%)", value=35.0, step=0.1)
+            Total_Body_Fat_Ratio_TBFR = st.number_input("Total Body Fat Ratio (%)", value=st.session_state.get('gs_Total_Body_Fat_Ratio_TBFR', 35.0), step=0.1, key='gs_Total_Body_Fat_Ratio_TBFR')
         with col2:
-            Lean_Mass_LM = st.number_input("Lean Mass (kg)", value=45.0, step=0.1)
+            Lean_Mass_LM = st.number_input("Lean Mass (kg)", value=st.session_state.get('gs_Lean_Mass_LM', 45.0), step=0.1, key='gs_Lean_Mass_LM')
         with col3:
-            Body_Protein_Content_Protein = st.number_input("Protein (kg)", value=9.0, step=0.1)
+            Body_Protein_Content_Protein = st.number_input("Protein (kg)", value=st.session_state.get('gs_Body_Protein_Content_Protein', 9.0), step=0.1, key='gs_Body_Protein_Content_Protein')
         with col4:
-            Visceral_Fat_Rating_VFR = st.number_input("Visceral Fat Rating", value=10, step=1)
+            Visceral_Fat_Rating_VFR = st.number_input("Visceral Fat Rating", value=st.session_state.get('gs_Visceral_Fat_Rating_VFR', 10), step=1, key='gs_Visceral_Fat_Rating_VFR')
             
         with col1:
-            Bone_Mass_BM = st.number_input("Bone Mass (kg)", value=2.0, step=0.1)
+            Bone_Mass_BM = st.number_input("Bone Mass (kg)", value=st.session_state.get('gs_Bone_Mass_BM', 2.0), step=0.1, key='gs_Bone_Mass_BM')
         with col2:
-            Muscle_Mass_MM = st.number_input("Muscle Mass (kg)", value=42.0, step=0.1)
+            Muscle_Mass_MM = st.number_input("Muscle Mass (kg)", value=st.session_state.get('gs_Muscle_Mass_MM', 42.0), step=0.1, key='gs_Muscle_Mass_MM')
         with col3:
-            Total_Fat_Content_TFC = st.number_input("Total Fat Content (kg)", value=25.0, step=0.1)
+            Total_Fat_Content_TFC = st.number_input("Total Fat Content (kg)", value=st.session_state.get('gs_Total_Fat_Content_TFC', 25.0), step=0.1, key='gs_Total_Fat_Content_TFC')
         with col4:
-            Visceral_Fat_Area_VFA = st.number_input("Visceral Fat Area (cm²)", value=90.0, step=0.1)
+            Visceral_Fat_Area_VFA = st.number_input("Visceral Fat Area (cm²)", value=st.session_state.get('gs_Visceral_Fat_Area_VFA', 90.0), step=0.1, key='gs_Visceral_Fat_Area_VFA')
             
         with col1:
-             Visceral_Muscle_Area_VMA_Kg = st.number_input("Visceral Muscle Area (kg)", value=40.0, step=0.1)
+             Visceral_Muscle_Area_VMA_Kg = st.number_input("Visceral Muscle Area (kg)", value=st.session_state.get('gs_Visceral_Muscle_Area_VMA_Kg', 40.0), step=0.1, key='gs_Visceral_Muscle_Area_VMA_Kg')
         with col2:
-            Obesity = st.number_input("Obesity (0=No, 1=Yes)", 0, 1, 0)
+            Obesity = st.number_input("Obesity (0=No, 1=Yes)", 0, 1, int(st.session_state.get('gs_Obesity', 0)), key='gs_Obesity')
             
         
         st.markdown("### 🧪 Blood Labs")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            Glucose = st.number_input("Glucose", value=100.0, step=0.1)
+            Glucose = st.number_input("Glucose", value=st.session_state.get('gs_Glucose', 100.0), step=0.1, key='gs_Glucose')
         with col2:
-            Total_Cholesterol_TC = st.number_input("Total Cholesterol (TC)", value=220.0, step=0.1)
+            Total_Cholesterol_TC = st.number_input("Total Cholesterol (TC)", value=st.session_state.get('gs_Total_Cholesterol_TC', 220.0), step=0.1, key='gs_Total_Cholesterol_TC')
         with col3:
-            Low_Density_Lipoprotein_LDL = st.number_input("LDL", value=130.0, step=0.1)
+            Low_Density_Lipoprotein_LDL = st.number_input("LDL", value=st.session_state.get('gs_Low_Density_Lipoprotein_LDL', 130.0), step=0.1, key='gs_Low_Density_Lipoprotein_LDL')
         with col4:
-            High_Density_Lipoprotein_HDL = st.number_input("HDL", value=40.0, step=0.1)
+            High_Density_Lipoprotein_HDL = st.number_input("HDL", value=st.session_state.get('gs_High_Density_Lipoprotein_HDL', 40.0), step=0.1, key='gs_High_Density_Lipoprotein_HDL')
 
         with col1:
-            Triglyceride = st.number_input("Triglyceride", value=160.0, step=0.1)
+            Triglyceride = st.number_input("Triglyceride", value=st.session_state.get('gs_Triglyceride', 160.0), step=0.1, key='gs_Triglyceride')
         with col2:
-            Aspartat_Aminotransferaz_AST = st.number_input("AST", value=30.0, step=0.1)
+            Aspartat_Aminotransferaz_AST = st.number_input("AST", value=st.session_state.get('gs_Aspartat_Aminotransferaz_AST', 30.0), step=0.1, key='gs_Aspartat_Aminotransferaz_AST')
         with col3:
-            Alanin_Aminotransferaz_ALT = st.number_input("ALT", value=35.0, step=0.1)
+            Alanin_Aminotransferaz_ALT = st.number_input("ALT", value=st.session_state.get('gs_Alanin_Aminotransferaz_ALT', 35.0), step=0.1, key='gs_Alanin_Aminotransferaz_ALT')
         with col4:
-            Alkaline_Phosphatase_ALP = st.number_input("ALP", value=100.0, step=0.1)
+            Alkaline_Phosphatase_ALP = st.number_input("ALP", value=st.session_state.get('gs_Alkaline_Phosphatase_ALP', 100.0), step=0.1, key='gs_Alkaline_Phosphatase_ALP')
             
         with col1:
-            Creatinine = st.number_input("Creatinine", value=0.9, step=0.1)
+            Creatinine = st.number_input("Creatinine", value=st.session_state.get('gs_Creatinine', 0.9), step=0.1, key='gs_Creatinine')
         with col2:
-            Glomerular_Filtration_Rate_GFR = st.number_input("GFR", value=80.0, step=0.1)
+            Glomerular_Filtration_Rate_GFR = st.number_input("GFR", value=st.session_state.get('gs_Glomerular_Filtration_Rate_GFR', 80.0), step=0.1, key='gs_Glomerular_Filtration_Rate_GFR')
         with col3:
-            C_Reactive_Protein_CRP = st.number_input("C-Reactive Protein (CRP)", value=2.0, step=0.1)
+            C_Reactive_Protein_CRP = st.number_input("C-Reactive Protein (CRP)", value=st.session_state.get('gs_C_Reactive_Protein_CRP', 2.0), step=0.1, key='gs_C_Reactive_Protein_CRP')
         with col4:
-            Hemoglobin_HGB = st.number_input("Hemoglobin (HGB)", value=13.0, step=0.1)
+            Hemoglobin_HGB = st.number_input("Hemoglobin (HGB)", value=st.session_state.get('gs_Hemoglobin_HGB', 13.0), step=0.1, key='gs_Hemoglobin_HGB')
         
         with col1:
-            Vitamin_D = st.number_input("Vitamin D", value=20.0, step=0.1)
+            Vitamin_D = st.number_input("Vitamin D", value=st.session_state.get('gs_Vitamin_D', 20.0), step=0.1, key='gs_Vitamin_D')
 
         st.markdown("### 🩺 Clinical History")
         col1, col2, col3 = st.columns(3)
         with col1:
-            Coronary_Artery_Disease_CAD = st.number_input("CAD (0=No, 1=Yes)", 0, 1, 0)
+            Coronary_Artery_Disease_CAD = st.number_input("CAD (0=No, 1=Yes)", 0, 1, int(st.session_state.get('gs_Coronary_Artery_Disease_CAD', 0)), key='gs_Coronary_Artery_Disease_CAD')
         with col2:
-            Hypothyroidism = st.number_input("Hypothyroidism (0=No, 1=Yes)", 0, 1, 0)
+            Hypothyroidism = st.number_input("Hypothyroidism (0=No, 1=Yes)", 0, 1, int(st.session_state.get('gs_Hypothyroidism', 0)), key='gs_Hypothyroidism')
         with col3:
-            Hyperlipidemia = st.number_input("Hyperlipidemia (0=No, 1=Yes)", 0, 1, 0)
+            Hyperlipidemia = st.number_input("Hyperlipidemia (0=No, 1=Yes)", 0, 1, int(st.session_state.get('gs_Hyperlipidemia', 0)), key='gs_Hyperlipidemia')
 
         with col1:
-            Diabetes_Mellitus_DM = st.number_input("Diabetes (0=No, 1=Yes)", 0, 1, 0)
+            Diabetes_Mellitus_DM = st.number_input("Diabetes (0=No, 1=Yes)", 0, 1, int(st.session_state.get('gs_Diabetes_Mellitus_DM', 0)), key='gs_Diabetes_Mellitus_DM')
         with col2:
-            Comorbidity = st.selectbox("Comorbidity", ('No', 'Yes'))
+            Comorbidity = st.selectbox("Comorbidity", ('No', 'Yes'), index=0 if st.session_state.get('gs_Comorbidity','No')=='No' else 1, key='gs_Comorbidity')
         with col3:
-            Hepatic_Fat_Accumulation_HFA = st.selectbox("Hepatic Fat Accumulation", ('None', 'Mild', 'Moderate', 'Severe'))
+            Hepatic_Fat_Accumulation_HFA = st.selectbox("Hepatic Fat Accumulation", ('None', 'Mild', 'Moderate', 'Severe'), index=0 if st.session_state.get('gs_Hepatic_Fat_Accumulation_HFA','None')=='None' else (1 if st.session_state.get('gs_Hepatic_Fat_Accumulation_HFA')=='Mild' else (2 if st.session_state.get('gs_Hepatic_Fat_Accumulation_HFA')=='Moderate' else 3)), key='gs_Hepatic_Fat_Accumulation_HFA')
 
         st.markdown("---")
         submitted = st.form_submit_button("Analyze GallStone Risk")
@@ -1555,7 +1863,7 @@ elif app_mode == "🪨 GallStone Predictor":
 
 # --- PLACEHOLDER PAGES ---
 # --- DIABETES PREDICTOR PAGE ---
-elif app_mode == "🩸 Diabetes Predictor":
+elif app_mode == "Diabetes Predictor":
     st.markdown("# Diabetes Risk Predictor")
     st.markdown("This predictor analyzes **24 clinical metrics** to assess risk, based on our **Custom Logistic Regression** model.")
 
@@ -1566,76 +1874,134 @@ elif app_mode == "🩸 Diabetes Predictor":
         'cad', 'appet', 'pe', 'ane'
     ]
     
+    # --- Prefill sample buttons for Diabetes Predictor ---
+    st.markdown("### Quick samples")
+    btn_col1, btn_col2, _ = st.columns([1,1,6])
+
+    # Sample 1: HIGH RISK (ckd-like profile)
+    if btn_col1.button("Load Sample 1"):
+        st.session_state['db_age'] = 65.0
+        st.session_state['db_bp'] = 130.0
+        st.session_state['db_sg'] = 1.010
+        st.session_state['db_al'] = 4.0
+        st.session_state['db_su'] = 3.0
+        st.session_state['db_rbc'] = 'abnormal'
+        st.session_state['db_pc'] = 'abnormal'
+        st.session_state['db_pcc'] = 'present'
+        st.session_state['db_ba'] = 'yes'
+        st.session_state['db_bgr'] = 250.0
+        st.session_state['db_bu'] = 120.0
+        st.session_state['db_sc'] = 5.5
+        st.session_state['db_sod'] = 130.0
+        st.session_state['db_pot'] = 6.0
+        st.session_state['db_hemo'] = 9.0
+        st.session_state['db_pcv'] = 28.0
+        st.session_state['db_wc'] = 12000.0
+        st.session_state['db_rc'] = 3.0
+        st.session_state['db_htn'] = 'yes'
+        st.session_state['db_dm'] = 'yes'
+        st.session_state['db_cad'] = 'yes'
+        st.session_state['db_appet'] = 'poor'
+        st.session_state['db_pe'] = 'yes'
+        st.session_state['db_ane'] = 'yes'
+
+    # Sample 2: LOW RISK (notckd-like profile)
+    if btn_col2.button("Load Sample 2"):
+        st.session_state['db_age'] = 35.0
+        st.session_state['db_bp'] = 80.0
+        st.session_state['db_sg'] = 1.025
+        st.session_state['db_al'] = 0.0
+        st.session_state['db_su'] = 0.0
+        st.session_state['db_rbc'] = 'normal'
+        st.session_state['db_pc'] = 'normal'
+        st.session_state['db_pcc'] = 'notpresent'
+        st.session_state['db_ba'] = 'notpresent'
+        st.session_state['db_bgr'] = 90.0
+        st.session_state['db_bu'] = 20.0
+        st.session_state['db_sc'] = 0.8
+        st.session_state['db_sod'] = 145.0
+        st.session_state['db_pot'] = 4.0
+        st.session_state['db_hemo'] = 15.0
+        st.session_state['db_pcv'] = 45.0
+        st.session_state['db_wc'] = 6500.0
+        st.session_state['db_rc'] = 5.5
+        st.session_state['db_htn'] = 'no'
+        st.session_state['db_dm'] = 'no'
+        st.session_state['db_cad'] = 'no'
+        st.session_state['db_appet'] = 'good'
+        st.session_state['db_pe'] = 'no'
+        st.session_state['db_ane'] = 'no'
+
     with st.form("diabetes_form"):
         st.markdown("### 👤 Patient Vitals")
         col1, col2, col3 = st.columns(3)
         with col1:
-            age = st.number_input("Age (years)", min_value=1, max_value=120, value=50)
+            age = st.number_input("Age (years)", min_value=1, max_value=120, value=int(st.session_state.get('db_age', 50)), key='db_age')
         with col2:
-            bp = st.number_input("Blood Pressure (bp, mm/Hg)", min_value=40.0, max_value=200.0, value=80.0, step=1.0)
+            bp = st.number_input("Blood Pressure (bp, mm/Hg)", min_value=40.0, max_value=200.0, value=st.session_state.get('db_bp', 80.0), step=1.0, key='db_bp')
         with col3:
-            bgr = st.number_input("Blood Glucose (bgr, mgs/dl)", min_value=20.0, max_value=500.0, value=100.0, step=1.0)
+            bgr = st.number_input("Blood Glucose (bgr, mgs/dl)", min_value=20.0, max_value=500.0, value=st.session_state.get('db_bgr', 100.0), step=1.0, key='db_bgr')
 
         st.markdown("### 🧪 Lab Results (Blood)")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            bu = st.number_input("Blood Urea (bu, mgs/dl)", min_value=1.0, max_value=400.0, value=40.0, step=0.1)
+            bu = st.number_input("Blood Urea (bu, mgs/dl)", min_value=1.0, max_value=400.0, value=st.session_state.get('db_bu', 40.0), step=0.1, key='db_bu')
         with col2:
-            sc = st.number_input("Serum Creatinine (sc, mgs/dl)", min_value=0.1, max_value=80.0, value=1.2, step=0.1)
+            sc = st.number_input("Serum Creatinine (sc, mgs/dl)", min_value=0.1, max_value=80.0, value=st.session_state.get('db_sc', 1.2), step=0.1, key='db_sc')
         with col3:
-            sod = st.number_input("Sodium (sod, mEq/L)", min_value=100.0, max_value=180.0, value=138.0, step=0.1)
+            sod = st.number_input("Sodium (sod, mEq/L)", min_value=100.0, max_value=180.0, value=st.session_state.get('db_sod', 138.0), step=0.1, key='db_sod')
         with col4:
-            pot = st.number_input("Potassium (pot, mEq/L)", min_value=2.0, max_value=10.0, value=4.5, step=0.1)
+            pot = st.number_input("Potassium (pot, mEq/L)", min_value=2.0, max_value=10.0, value=st.session_state.get('db_pot', 4.5), step=0.1, key='db_pot')
 
         st.markdown("### 🩸 Lab Results (Complete Blood Count)")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            hemo = st.number_input("Hemoglobin (hemo, gms/dl)", min_value=3.0, max_value=20.0, value=15.0, step=0.1)
+            hemo = st.number_input("Hemoglobin (hemo, gms/dl)", min_value=3.0, max_value=20.0, value=st.session_state.get('db_hemo', 15.0), step=0.1, key='db_hemo')
         with col2:
-            pcv = st.number_input("Packed Cell Vol (pcv, %)", min_value=10.0, max_value=60.0, value=45.0, step=1.0)
+            pcv = st.number_input("Packed Cell Vol (pcv, %)", min_value=10.0, max_value=60.0, value=st.session_state.get('db_pcv', 45.0), step=1.0, key='db_pcv')
         with col3:
-            wc = st.number_input("WBC Count (wc, cells/cumm)", min_value=2000.0, max_value=30000.0, value=7500.0, step=100.0)
+            wc = st.number_input("WBC Count (wc, cells/cumm)", min_value=2000.0, max_value=30000.0, value=st.session_state.get('db_wc', 7500.0), step=100.0, key='db_wc')
         with col4:
-            rc = st.number_input("RBC Count (rc, millions/cmm)", min_value=2.0, max_value=9.0, value=5.2, step=0.1)
+            rc = st.number_input("RBC Count (rc, millions/cmm)", min_value=2.0, max_value=9.0, value=st.session_state.get('db_rc', 5.2), step=0.1, key='db_rc')
 
         st.markdown("### 💧 Urinalysis (Nominal Values)")
         # --- IMPORTANT: These must be strings or numbers as defined in your training script ---
         col1, col2, col3 = st.columns(3)
         with col1:
             # Your training script treated these as numeric, so we use numbers
-            sg = st.selectbox("Specific Gravity (sg)", (1.005, 1.010, 1.015, 1.020, 1.025), index=2)
+            sg = st.selectbox("Specific Gravity (sg)", (1.005, 1.010, 1.015, 1.020, 1.025), index=(0 if st.session_state.get('db_sg',1.015)==1.005 else (1 if st.session_state.get('db_sg',1.015)==1.010 else (2 if st.session_state.get('db_sg',1.015)==1.015 else (3 if st.session_state.get('db_sg',1.015)==1.020 else 4)))), key='db_sg')
         with col2:
-            al = st.selectbox("Albumin (al)", (0.0, 1.0, 2.0, 3.0, 4.0, 5.0), index=0)
+            al = st.selectbox("Albumin (al)", (0.0, 1.0, 2.0, 3.0, 4.0, 5.0), index=int(st.session_state.get('db_al',0.0)), key='db_al')
         with col3:
-            su = st.selectbox("Sugar (su)", (0.0, 1.0, 2.0, 3.0, 4.0, 5.0), index=0)
+            su = st.selectbox("Sugar (su)", (0.0, 1.0, 2.0, 3.0, 4.0, 5.0), index=int(st.session_state.get('db_su',0.0)), key='db_su')
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            rbc = st.selectbox("Red Blood Cells (rbc)", ('normal', 'abnormal'), index=0)
+            rbc = st.selectbox("Red Blood Cells (rbc)", ('normal', 'abnormal'), index=0 if st.session_state.get('db_rbc','normal')=='normal' else 1, key='db_rbc')
         with col2:
-            pc = st.selectbox("Pus Cell (pc)", ('normal', 'abnormal'), index=0)
+            pc = st.selectbox("Pus Cell (pc)", ('normal', 'abnormal'), index=0 if st.session_state.get('db_pc','normal')=='normal' else 1, key='db_pc')
         with col3:
-            pcc = st.selectbox("Pus Cell Clumps (pcc)", ('notpresent', 'present'), index=0)
+            pcc = st.selectbox("Pus Cell Clumps (pcc)", ('notpresent', 'present'), index=0 if st.session_state.get('db_pcc','notpresent')=='notpresent' else 1, key='db_pcc')
         
         with col1: # Re-using first column
-             ba = st.selectbox("Bacteria (ba)", ('notpresent', 'present'), index=0)
+             ba = st.selectbox("Bacteria (ba)", ('notpresent', 'present'), index=0 if st.session_state.get('db_ba','notpresent')=='notpresent' else 1, key='db_ba')
 
         st.markdown("### 🩺 Clinical History & Symptoms (Nominal)")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            htn = st.selectbox("Hypertension (htn)", ('no', 'yes'), index=0)
+            htn = st.selectbox("Hypertension (htn)", ('no', 'yes'), index=0 if st.session_state.get('db_htn','no')=='no' else 1, key='db_htn')
         with col2:
-            dm = st.selectbox("Diabetes Mellitus (dm)", ('no', 'yes'), index=0, help="Note: This is a historical symptom, not the prediction target.")
+            dm = st.selectbox("Diabetes Mellitus (dm)", ('no', 'yes'), index=0 if st.session_state.get('db_dm','no')=='no' else 1, key='db_dm', help="Note: This is a historical symptom, not the prediction target.")
         with col3:
-            cad = st.selectbox("Coronary Artery Disease (cad)", ('no', 'yes'), index=0)
+            cad = st.selectbox("Coronary Artery Disease (cad)", ('no', 'yes'), index=0 if st.session_state.get('db_cad','no')=='no' else 1, key='db_cad')
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            appet = st.selectbox("Appetite (appet)", ('good', 'poor'), index=0)
+            appet = st.selectbox("Appetite (appet)", ('good', 'poor'), index=0 if st.session_state.get('db_appet','good')=='good' else 1, key='db_appet')
         with col2:
-            pe = st.selectbox("Pedal Edema (pe)", ('no', 'yes'), index=0)
+            pe = st.selectbox("Pedal Edema (pe)", ('no', 'yes'), index=0 if st.session_state.get('db_pe','no')=='no' else 1, key='db_pe')
         with col3:
-            ane = st.selectbox("Anemia (ane)", ('no', 'yes'), index=0)
+            ane = st.selectbox("Anemia (ane)", ('no', 'yes'), index=0 if st.session_state.get('db_ane','no')=='no' else 1, key='db_ane')
 
         st.markdown("---")
         submitted = st.form_submit_button("Analyze My Risk")
@@ -1697,12 +2063,12 @@ elif app_mode == "🩸 Diabetes Predictor":
             except Exception as e:
                 st.error(f"❌ An error occurred during prediction: {e}")
 
-elif app_mode == "🩺 Liver Disease Predictor":
+elif app_mode == "Liver Disease Predictor":
     st.markdown("# 🩺 Liver Disease Predictor")
     st.info("🛠️ **Feature Coming Soon!** Advanced liver health analysis will be available shortly.", icon="⚡")
 
 # --- KIDNEY DISEASE PREDICTOR PAGE ---
-elif app_mode == "🔬 Kidney Disease Predictor":
+elif app_mode == "Kidney Disease Predictor":
     st.markdown("# Chronic Kidney Disease (CKD) Predictor")
     st.markdown("Our **Custom KNN** model will analyze 24 clinical metrics to predict your risk for CKD.")
 
@@ -1713,75 +2079,133 @@ elif app_mode == "🔬 Kidney Disease Predictor":
         'cad', 'appet', 'pe', 'ane'
     ]
     
+    # --- Prefill sample buttons for Kidney Disease Predictor ---
+    st.markdown("### Quick samples")
+    btn_col1, btn_col2, _ = st.columns([1,1,6])
+
+    # Sample 1: CKD-like (high risk)
+    if btn_col1.button("Load Sample 1"):
+        st.session_state['kd_age'] = 62.0
+        st.session_state['kd_bp'] = 80.0
+        st.session_state['kd_sg'] = '1.010'
+        st.session_state['kd_al'] = '3.0'
+        st.session_state['kd_su'] = '0.0'
+        st.session_state['kd_rbc'] = 'abnormal'
+        st.session_state['kd_pc'] = 'normal'
+        st.session_state['kd_pcc'] = 'present'
+        st.session_state['kd_ba'] = 'notpresent'
+        st.session_state['kd_bgr'] = 423.0
+        st.session_state['kd_bu'] = 53.0
+        st.session_state['kd_sc'] = 1.8
+        st.session_state['kd_sod'] = 135.0
+        st.session_state['kd_pot'] = 4.0
+        st.session_state['kd_hemo'] = 9.6
+        st.session_state['kd_pcv'] = 31.0
+        st.session_state['kd_wc'] = 7500.0
+        st.session_state['kd_rc'] = 3.8
+        st.session_state['kd_htn'] = 'yes'
+        st.session_state['kd_dm'] = 'yes'
+        st.session_state['kd_cad'] = 'no'
+        st.session_state['kd_appet'] = 'poor'
+        st.session_state['kd_pe'] = 'no'
+        st.session_state['kd_ane'] = 'yes'
+
+    # Sample 2: notckd-like (low risk)
+    if btn_col2.button("Load Sample 2"):
+        st.session_state['kd_age'] = 40.0
+        st.session_state['kd_bp'] = 80.0
+        st.session_state['kd_sg'] = '1.025'
+        st.session_state['kd_al'] = '0.0'
+        st.session_state['kd_su'] = '0.0'
+        st.session_state['kd_rbc'] = 'normal'
+        st.session_state['kd_pc'] = 'normal'
+        st.session_state['kd_pcc'] = 'notpresent'
+        st.session_state['kd_ba'] = 'notpresent'
+        st.session_state['kd_bgr'] = 120.0
+        st.session_state['kd_bu'] = 40.0
+        st.session_state['kd_sc'] = 1.0
+        st.session_state['kd_sod'] = 142.0
+        st.session_state['kd_pot'] = 4.5
+        st.session_state['kd_hemo'] = 15.0
+        st.session_state['kd_pcv'] = 48.0
+        st.session_state['kd_wc'] = 8000.0
+        st.session_state['kd_rc'] = 5.2
+        st.session_state['kd_htn'] = 'no'
+        st.session_state['kd_dm'] = 'no'
+        st.session_state['kd_cad'] = 'no'
+        st.session_state['kd_appet'] = 'good'
+        st.session_state['kd_pe'] = 'no'
+        st.session_state['kd_ane'] = 'no'
+
     with st.form("kidney_disease_form"):
         st.markdown("### 👤 Patient Vitals")
         col1, col2, col3 = st.columns(3)
         with col1:
-            age = st.number_input("Age (years)", min_value=1, max_value=120, value=50)
+            age = st.number_input("Age (years)", min_value=1, max_value=120, value=int(st.session_state.get('kd_age',50)), key='kd_age')
         with col2:
-            bp = st.number_input("Blood Pressure (bp, mm/Hg)", min_value=40.0, max_value=200.0, value=80.0, step=1.0)
+            bp = st.number_input("Blood Pressure (bp, mm/Hg)", min_value=40.0, max_value=200.0, value=st.session_state.get('kd_bp',80.0), step=1.0, key='kd_bp')
         with col3:
-            bgr = st.number_input("Blood Glucose (bgr, mgs/dl)", min_value=20.0, max_value=500.0, value=100.0, step=1.0)
+            bgr = st.number_input("Blood Glucose (bgr, mgs/dl)", min_value=20.0, max_value=500.0, value=st.session_state.get('kd_bgr',100.0), step=1.0, key='kd_bgr')
 
         st.markdown("### 🧪 Lab Results (Blood)")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            bu = st.number_input("Blood Urea (bu, mgs/dl)", min_value=1.0, max_value=400.0, value=40.0, step=0.1)
+            bu = st.number_input("Blood Urea (bu, mgs/dl)", min_value=1.0, max_value=400.0, value=st.session_state.get('kd_bu',40.0), step=0.1, key='kd_bu')
         with col2:
-            sc = st.number_input("Serum Creatinine (sc, mgs/dl)", min_value=0.1, max_value=80.0, value=1.2, step=0.1)
+            sc = st.number_input("Serum Creatinine (sc, mgs/dl)", min_value=0.1, max_value=80.0, value=st.session_state.get('kd_sc',1.2), step=0.1, key='kd_sc')
         with col3:
-            sod = st.number_input("Sodium (sod, mEq/L)", min_value=100.0, max_value=180.0, value=138.0, step=0.1)
+            sod = st.number_input("Sodium (sod, mEq/L)", min_value=100.0, max_value=180.0, value=st.session_state.get('kd_sod',138.0), step=0.1, key='kd_sod')
         with col4:
-            pot = st.number_input("Potassium (pot, mEq/L)", min_value=2.0, max_value=10.0, value=4.5, step=0.1)
+            pot = st.number_input("Potassium (pot, mEq/L)", min_value=2.0, max_value=10.0, value=st.session_state.get('kd_pot',4.5), step=0.1, key='kd_pot')
 
         st.markdown("### 🩸 Lab Results (Complete Blood Count)")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            hemo = st.number_input("Hemoglobin (hemo, gms/dl)", min_value=3.0, max_value=20.0, value=15.0, step=0.1)
+            hemo = st.number_input("Hemoglobin (hemo, gms/dl)", min_value=3.0, max_value=20.0, value=st.session_state.get('kd_hemo',15.0), step=0.1, key='kd_hemo')
         with col2:
-            pcv = st.number_input("Packed Cell Vol (pcv, %)", min_value=10.0, max_value=60.0, value=45.0, step=1.0)
+            pcv = st.number_input("Packed Cell Vol (pcv, %)", min_value=10.0, max_value=60.0, value=st.session_state.get('kd_pcv',45.0), step=1.0, key='kd_pcv')
         with col3:
-            wc = st.number_input("WBC Count (wc, cells/cumm)", min_value=2000.0, max_value=30000.0, value=7500.0, step=100.0)
+            wc = st.number_input("WBC Count (wc, cells/cumm)", min_value=2000.0, max_value=30000.0, value=st.session_state.get('kd_wc',7500.0), step=100.0, key='kd_wc')
         with col4:
-            rc = st.number_input("RBC Count (rc, millions/cmm)", min_value=2.0, max_value=9.0, value=5.2, step=0.1)
+            rc = st.number_input("RBC Count (rc, millions/cmm)", min_value=2.0, max_value=9.0, value=st.session_state.get('kd_rc',5.2), step=0.1, key='kd_rc')
 
         st.markdown("### 💧 Urinalysis (Nominal Values)")
         # --- IMPORTANT: These must be strings, as per your predict.py ---
         col1, col2, col3 = st.columns(3)
         with col1:
-            sg = st.selectbox("Specific Gravity (sg)", ('1.005', '1.010', '1.015', '1.020', '1.025'), index=2)
+            sg = st.selectbox("Specific Gravity (sg)", ('1.005', '1.010', '1.015', '1.020', '1.025'), index=(0 if st.session_state.get('kd_sg','1.015')=='1.005' else (1 if st.session_state.get('kd_sg','1.015')=='1.010' else (2 if st.session_state.get('kd_sg','1.015')=='1.015' else (3 if st.session_state.get('kd_sg','1.015')=='1.020' else 4)))), key='kd_sg')
         with col2:
-            al = st.selectbox("Albumin (al)", ('0.0', '1.0', '2.0', '3.0', '4.0', '5.0'), index=0)
+            al = st.selectbox("Albumin (al)", ('0.0', '1.0', '2.0', '3.0', '4.0', '5.0'), index=(0 if st.session_state.get('kd_al','0.0')=='0.0' else (1 if st.session_state.get('kd_al')=='1.0' else (2 if st.session_state.get('kd_al')=='2.0' else (3 if st.session_state.get('kd_al')=='3.0' else (4 if st.session_state.get('kd_al')=='4.0' else 5))))), key='kd_al')
         with col3:
-            su = st.selectbox("Sugar (su)", ('0.0', '1.0', '2.0', '3.0', '4.0', '5.0'), index=0)
+            su = st.selectbox("Sugar (su)", ('0.0', '1.0', '2.0', '3.0', '4.0', '5.0'), index=(0 if st.session_state.get('kd_su','0.0')=='0.0' else (1 if st.session_state.get('kd_su')=='1.0' else (2 if st.session_state.get('kd_su')=='2.0' else (3 if st.session_state.get('kd_su')=='3.0' else (4 if st.session_state.get('kd_su')=='4.0' else 5))))), key='kd_su')
         
         col1, col2, col3 = st.columns(3)
         with col1:
-            rbc = st.selectbox("Red Blood Cells (rbc)", ('normal', 'abnormal'), index=0)
+            rbc = st.selectbox("Red Blood Cells (rbc)", ('normal', 'abnormal'), index=0 if st.session_state.get('kd_rbc','normal')=='normal' else 1, key='kd_rbc')
         with col2:
-            pc = st.selectbox("Pus Cell (pc)", ('normal', 'abnormal'), index=0)
+            pc = st.selectbox("Pus Cell (pc)", ('normal', 'abnormal'), index=0 if st.session_state.get('kd_pc','normal')=='normal' else 1, key='kd_pc')
         with col3:
-            pcc = st.selectbox("Pus Cell Clumps (pcc)", ('notpresent', 'present'), index=0)
+            pcc = st.selectbox("Pus Cell Clumps (pcc)", ('notpresent', 'present'), index=0 if st.session_state.get('kd_pcc','notpresent')=='notpresent' else 1, key='kd_pcc')
         
         with col1: # Re-using first column
-             ba = st.selectbox("Bacteria (ba)", ('notpresent', 'present'), index=0)
+             ba = st.selectbox("Bacteria (ba)", ('notpresent', 'present'), index=0 if st.session_state.get('kd_ba','notpresent')=='notpresent' else 1, key='kd_ba')
 
         st.markdown("### 🩺 Clinical History & Symptoms (Nominal)")
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            htn = st.selectbox("Hypertension (htn)", ('no', 'yes'), index=0)
+            htn = st.selectbox("Hypertension (htn)", ('no', 'yes'), index=0 if st.session_state.get('kd_htn','no')=='no' else 1, key='kd_htn')
         with col2:
-            dm = st.selectbox("Diabetes Mellitus (dm)", ('no', 'yes'), index=0)
+            dm = st.selectbox("Diabetes Mellitus (dm)", ('no', 'yes'), index=0 if st.session_state.get('kd_dm','no')=='no' else 1, key='kd_dm')
         with col3:
-            cad = st.selectbox("Coronary Artery Disease (cad)", ('no', 'yes'), index=0)
+            cad = st.selectbox("Coronary Artery Disease (cad)", ('no', 'yes'), index=0 if st.session_state.get('kd_cad','no')=='no' else 1, key='kd_cad')
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            appet = st.selectbox("Appetite (appet)", ('good', 'poor'), index=0)
+            appet = st.selectbox("Appetite (appet)", ('good', 'poor'), index=0 if st.session_state.get('kd_appet','good')=='good' else 1, key='kd_appet')
         with col2:
-            pe = st.selectbox("Pedal Edema (pe)", ('no', 'yes'), index=0)
+            pe = st.selectbox("Pedal Edema (pe)", ('no', 'yes'), index=0 if st.session_state.get('kd_pe','no')=='no' else 1, key='kd_pe')
         with col3:
-            ane = st.selectbox("Anemia (ane)", ('no', 'yes'), index=0)
+            ane = st.selectbox("Anemia (ane)", ('no', 'yes'), index=0 if st.session_state.get('kd_ane','no')=='no' else 1, key='kd_ane')
 
         st.markdown("---")
         submitted = st.form_submit_button("Analyze My Risk")
@@ -1843,7 +2267,8 @@ elif app_mode == "🔬 Kidney Disease Predictor":
                 st.error(f"❌ An error occurred during prediction: {e}")
 
 # --- BRAIN TUMOR PREDICTOR PAGE ---
-elif app_mode == "🧠 Brain Tumor Predictor":
+# --- BRAIN TUMOR PREDICTOR PAGE ---
+elif app_mode == "Brain Tumor Predictor":
     st.markdown("# Brain Tumor Predictor (MRI)")
     st.markdown("Our **Custom KNN** model will analyze a brain MRI scan to classify the tumor type.")
     st.info("This model uses advanced feature extraction (HOG, GLCM, LBP) on the image provided.")
@@ -1901,9 +2326,9 @@ elif app_mode == "🧠 Brain Tumor Predictor":
                             st.success(f"**Prediction: {prediction_name}**")
                             st.info(f"The model has classified the MRI scan as **{prediction_name}**.")
                         
-                        else:
-                            st.error("Could not read or process the uploaded image.")
-
+                        # --- THIS 'else' BLOCK WAS REMOVED ---
+                        # The error is already handled inside extract_features_from_image()
+                        
                 except Exception as e:
                     st.error(f"❌ An error occurred during prediction: {e}")
                 

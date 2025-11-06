@@ -28,7 +28,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 
 # ❗ **ACTION REQUIRED**: Update this to the FULL, ABSOLUTE path to your code folder.
 # Example: CLASSIFIER_DIR = r'C:\Users\jaink\OneDrive\Desktop\ML_Project\Classifier_codes'
-CLASSIFIER_DIR = r'C:\Users\Research PC\Desktop\ML\Classifier_codes'
+CLASSIFIER_DIR = r'/home/lightshadow/pseudoD/Sem 5/HealthBuddy/Classifier_codes'
 
 if not os.path.isdir(CLASSIFIER_DIR):
     print(f"Error: Classifier directory '{CLASSIFIER_DIR}' not found.")

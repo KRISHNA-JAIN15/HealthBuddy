@@ -9,7 +9,7 @@ from collections import Counter # Needed by the imported custom classes
 
 # ❗ **ACTION REQUIRED**: Update this to the FULL, ABSOLUTE path to your code folder.
 # pickle needs this to understand the custom class definitions
-CLASSIFIER_DIR = r'C:\Users\jaink\OneDrive\Desktop\ML_Project\Classifier_codes'
+CLASSIFIER_DIR = r'/home/lightshadow/pseudoD/Sem 5/HealthBuddy/Classifier_codes'
 
 MODEL_FILENAME = 'gallstone_adaboost_model.pkl'
 
