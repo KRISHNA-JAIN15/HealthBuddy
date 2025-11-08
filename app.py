@@ -512,10 +512,10 @@ def load_brain_tumor_model():
 
 @st.cache_resource
 def load_eeg_model():
-    """Loads the saved EEG pipeline (model, imputer, encoder, features)."""
+    """Loads the saved EEG pipeline (model, encoder, features)."""
     # This model was trained with standard scikit-learn,
     # so it doesn't need the sys.modules-patching that other models do.
-    model_path = os.path.join('EEG', 'rf_eeg_pipeline.pkl')
+    model_path = os.path.join(PROJECT_ROOT, 'EEG', 'rf_eeg_pipeline.pkl')
     try:
         with open(model_path, 'rb') as file:
             eeg_pipeline = pickle.load(file)
@@ -523,22 +523,26 @@ def load_eeg_model():
         # Unpack the dictionary
         eeg_model = eeg_pipeline['model']
         eeg_le = eeg_pipeline['label_encoder']
-        eeg_imputer = eeg_pipeline['imputer']
+        # --- Imputer Removed ---
         eeg_feature_names = eeg_pipeline['feature_names']
         eeg_class_names = eeg_pipeline['class_names']
         
         print("EEG (Random Forest) pipeline loaded successfully")
-        return eeg_model, eeg_le, eeg_imputer, eeg_feature_names, eeg_class_names
+        return eeg_model, eeg_le, eeg_feature_names, eeg_class_names
+    
     except FileNotFoundError:
         st.error(f"❌ ERROR: The file '{model_path}' was not found. Please place 'rf_eeg_pipeline.pkl' in the 'EEG' folder.")
-        return None, None, None, None, None
+        return None, None, None, None
+    except KeyError as e:
+        st.error(f"❌ ERROR: The pipeline file '{model_path}' is missing a key: {e}. Please re-run the training script.")
+        return None, None, None, None
     except Exception as e:
         st.error(f"❌ An error occurred while loading the EEG model: {e}")
-        return None, None, None, None, None
+        return None, None, None, None
 
 # ... (rest of your model loading functions) ...
 bt_model, bt_le, bt_scaler, bt_pca, bt_class_names = load_brain_tumor_model()
-eeg_model, eeg_le, eeg_imputer, eeg_feature_names, eeg_class_names = load_eeg_model()
+eeg_model, eeg_le, eeg_feature_names, eeg_class_names = load_eeg_model()
 model, scaler, feature_names = load_body_fat_model()
 heart_model_pipeline = load_heart_attack_model()      
 maternal_model_pipeline = load_maternal_health_model()
@@ -2002,22 +2006,23 @@ elif app_mode == "GallStone Predictor":
                 # 3. Make prediction (pipeline handles all preprocessing)
                 prediction = gallstone_model.predict(input_df)
                 
-                # Get the single prediction ('Yes' or 'No')
-                result_label = prediction[0]
+                # Get the single prediction (1 for high risk, 0 for low risk)
+                result_value = prediction[0]
                 
                 # --- [END] NEW PREDICTION LOGIC ---
 
                 st.markdown("### 📋 Analysis Results")
                 
-                if result_label == 'Yes':
+                if result_value == 1:
                     st.error(
-                        f"**Prediction: {result_label} (High Risk for GallStones)**",
+                        f"**🔴 HIGH RISK: GallStone Formation Likely**",
                         icon="🚨"
                     )
-                    st.warning("This prediction indicates an elevated risk for gallstones. Please consult a healthcare provider for further evaluation.")
-                else: # 'No'
+                    st.warning("⚠️ **CRITICAL ALERT:** This prediction indicates a HIGH RISK for gallstone formation. Immediate medical consultation is strongly recommended.")
+                    st.markdown("**⚕️ Please consult a healthcare provider immediately for further evaluation and preventive measures.**")
+                else: # 0 (low risk)
                     st.success(
-                        f"**Prediction: {result_label} (Low Risk for GallStones)**",
+                        f"**🟢 LOW RISK: No GallStone Formation Detected**",
                         icon="💚"
                     )
                     st.info("Your results suggest a low risk. Continue to maintain a healthy lifestyle and regular check-ups.")
@@ -2507,9 +2512,8 @@ elif app_mode == "Brain Tumor Predictor":
 
 # ... (after the "Brain Tumor Predictor" block, near line 2038)
 
-# --- EEG PREDICTOR PAGE ---
 elif app_mode == "EEG Predictor":
-    st.markdown("# EEG Signal Predictor (EDF)")
+    st.markdown("EEG Predictor")
     st.markdown("Our **Random Forest** model will analyze an EEG scan to predict the session type (e.g., Background vs. Task).")
     
     # Check if MNE/SciPy are installed
@@ -2535,9 +2539,9 @@ elif app_mode == "EEG Predictor":
             
             # 3. Create the prediction button
             if st.button("Analyze EEG Scan", use_container_width=True):
-                # Check if all models loaded
-                if not all([eeg_model, eeg_le, eeg_imputer, eeg_feature_names, eeg_class_names]):
-                    missing = [name for name, var in [("eeg_model", eeg_model), ("eeg_le", eeg_le), ("eeg_imputer", eeg_imputer), ("eeg_feature_names", eeg_feature_names), ("eeg_class_names", eeg_class_names)] if not var]
+                # Check if all models loaded (removed eeg_imputer)
+                if not all([eeg_model, eeg_le, eeg_feature_names, eeg_class_names]):
+                    missing = [name for name, var in [("eeg_model", eeg_model), ("eeg_le", eeg_le), ("eeg_feature_names", eeg_feature_names), ("eeg_class_names", eeg_class_names)] if not var]
                     st.error(f"❌ **Model Error:** The following EEG prediction pipeline components are not loaded: {', '.join(missing)}. Check server logs.")
                 else:
                     try:
@@ -2548,20 +2552,16 @@ elif app_mode == "EEG Predictor":
                         
                         if features_df is not None:
                             with st.spinner("Running prediction pipeline..."):
-                                # 5. Preprocess DataFrame (align, impute)
+                                # 5. Preprocess DataFrame (align, fillna)
                                 # This logic is from your predict_eeg.py script
                                 
                                 # Align columns to match training data
                                 # Fills missing with NaN, drops extras (like 'Subject', 'Session')
                                 data_for_processing = features_df.reindex(columns=eeg_feature_names, fill_value=np.nan)
                                 
-                                # Apply the Imputer
-                                if eeg_imputer:
-                                    data_to_predict = eeg_imputer.transform(data_for_processing)
-                                else:
-                                    # Fallback if no imputer was saved
-                                    st.warning("No imputer found. Filling missing values with 0.")
-                                    data_to_predict = data_for_processing.fillna(0).values
+                                # --- Imputer Logic Removed ---
+                                # Fill any NaNs (from missing features) with 0
+                                data_to_predict = data_for_processing.fillna(0).values
                                 
                                 # 6. Predict
                                 predictions_idx = eeg_model.predict(data_to_predict)

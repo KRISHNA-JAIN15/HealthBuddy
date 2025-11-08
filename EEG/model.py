@@ -14,7 +14,7 @@ print("Loading libraries (sklearn, pandas, numpy, matplotlib)...")
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.metrics import accuracy_score, classification_report, roc_curve, auc, RocCurveDisplay
-from sklearn.impute import SimpleImputer
+# --- REMOVED ---: from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.exceptions import ConvergenceWarning
 
@@ -61,7 +61,7 @@ def load_and_preprocess_data(dataset_path):
         print(f"Error: No *features.csv or *data.csv files found in {dataset_path}.")
         return None
         
-    imputer = None  # <-- **FIX 1**: Initialize imputer to None
+    # --- REMOVED ---: imputer = None
     
     try:
         df_train = pd.read_csv(train_file)
@@ -90,16 +90,10 @@ def load_and_preprocess_data(dataset_path):
         # Align columns just in case
         X_train_raw, X_test_raw = X_train_raw.align(X_test_raw, join='left', axis=1, fill_value=0)
 
-        # Impute missing values (even in feature files, just in case)
-        if X_train_raw.isnull().sum().sum() > 0 or X_test_raw.isnull().sum().sum() > 0:
-            print("Imputing missing values (mean strategy)...")
-            imputer = SimpleImputer(strategy='mean') # <-- **FIX 2**: Assign to imputer var
-            X_train_imputed = imputer.fit_transform(X_train_raw)
-            X_test_imputed = imputer.transform(X_test_raw)
-        else:
-            print("No missing values found.")
-            X_train_imputed = X_train_raw.values
-            X_test_imputed = X_test_raw.values
+        # --- REMOVED ---: Imputation if/else block
+        # Assuming no missing values as requested.
+        X_train_imputed = X_train_raw.values
+        X_test_imputed = X_test_raw.values
 
         # Get feature names *after* all column ops
         feature_names = X_train_raw.columns.tolist()
@@ -113,7 +107,7 @@ def load_and_preprocess_data(dataset_path):
             "X_test": X_test, "y_test": y_test,
             "n_classes": n_classes, "feature_names": feature_names,
             "label_encoder": le,
-            "imputer": imputer  # <-- **FIX 3**: Return the imputer in the dictionary
+            # --- REMOVED ---: "imputer": imputer
         }
     except Exception as e:
         print(f"Error processing data in {dataset_path}: {e}")
@@ -212,14 +206,13 @@ if __name__ == "__main__":
     
     print("\n--- 4. Saving Model & Pipeline ---")
     
-    # Retrieve the imputer (it will be None if no imputation was done)
-    imputer = data['imputer'] # <-- This will now work correctly
+    # --- REMOVED ---: imputer = data['imputer'] 
     
     # Bundle all necessary components into a dictionary
     pipeline_components = {
         'model': model,
         'label_encoder': le,
-        'imputer': imputer,
+        # --- REMOVED ---: 'imputer': imputer,
         'feature_names': data['feature_names'], # Save feature names for prediction
         'class_names': list(class_names)
     }

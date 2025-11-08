@@ -13,7 +13,7 @@ try:
     
     loaded_model = pipeline['model']
     loaded_le = pipeline['label_encoder']
-    loaded_imputer = pipeline['imputer']
+    # --- REMOVED ---: loaded_imputer = pipeline.get('imputer', None) # Use .get for safety
     feature_names = pipeline['feature_names'] # This is crucial
     class_names = pipeline['class_names']
     
@@ -23,6 +23,10 @@ try:
 except FileNotFoundError:
     print(f"❌ ERROR: The file '{PIPELINE_FILENAME}' was not found.")
     print(f"   Make sure '{PIPELINE_FILENAME}' is in the same directory.")
+    sys.exit(1)
+except KeyError as e:
+    print(f"❌ ERROR: Pipeline file is missing a required key: {e}")
+    print("   Please re-run the training script to generate an updated .pkl file.")
     sys.exit(1)
 except Exception as e:
     print(f"❌ An error occurred while loading the file: {e}")
@@ -76,14 +80,10 @@ try:
     
     print(f"Data re-aligned to {len(feature_names)} features.")
 
-    # 1. Apply the Imputer (if one was saved)
-    #    This will fill any NaNs (including those from missing columns)
-    if loaded_imputer:
-        print("Applying loaded imputer...")
-        data_to_predict = loaded_imputer.transform(data_for_processing)
-    else:
-        print("No imputer found. Using data as-is (and filling NaNs with 0).")
-        data_to_predict = data_for_processing.fillna(0).values
+    # 1. --- REMOVED ---: Imputer check.
+    #    We now directly fill any NaNs (from missing columns) with 0.
+    print("Filling potential missing feature columns with 0.")
+    data_to_predict = data_for_processing.fillna(0).values
 
     # 2. Make predictions
     predictions_idx = loaded_model.predict(data_to_predict)
