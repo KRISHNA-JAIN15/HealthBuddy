@@ -8,10 +8,26 @@ import tempfile
 import sys
 import cv2
 from sklearn.preprocessing import LabelEncoder
+from sklearn.impute import SimpleImputer
+# Image feature extraction (scikit-image)\
 
-# Image feature extraction (scikit-image)
 try:
-    from skimage.feature import hog, local_binary_pattern, greycomatrix, greycoprops
+    import mne
+    from scipy.signal import welch
+    from scipy.stats import skew, kurtosis
+    eeg_libs_available = True
+    print("✅ MNE and SciPy imported successfully for EEG.")
+except Exception as e:
+    eeg_libs_available = False
+    mne = None
+    welch = None
+    skew = None
+    kurtosis = None
+    print(f"❌ MNE/SciPy import failed: {e}. EEG predictor will be disabled.")
+
+
+try:
+    from skimage.feature import hog, local_binary_pattern, graycomatrix, graycoprops
     scikit_image_available = True
     print("✅ scikit-image features imported successfully.")
 except Exception as e:
@@ -19,13 +35,22 @@ except Exception as e:
     scikit_image_available = False
     hog = None
     local_binary_pattern = None
-    greycomatrix = None
-    greycoprops = None
+    graycomatrix = None
+    graycoprops = None
     print(f"❌ scikit-image import failed: {e}")
 
 # Provide American-spelling aliases used elsewhere in the code
-graycomatrix = greycomatrix
-graycoprops = greycoprops
+graycomatrix = graycomatrix
+graycoprops = graycoprops
+
+EPOCH_DURATION_SEC = 2
+EEG_BANDS = {
+    'Delta': (0.5, 4),
+    'Theta': (4, 8),
+    'Alpha': (8, 12),
+    'Beta': (12, 30),
+    'Gamma': (30, 45)
+}
 
 # Define missing classes for pickle compatibility
 class OvRWrapper:
@@ -97,7 +122,112 @@ class OvRWrapper:
 
 
 
+# ... (after _RemainderColsList class) ...
 
+# --- EEG Helper Functions ---
+@st.cache_data
+def get_band_power(data, sfreq, band):
+    """Calculate the average power in a specific frequency band."""
+    if not eeg_libs_available:
+        raise ImportError("MNE/SciPy libraries are not available.")
+    band_low, band_high = band
+    # Welch's method for power spectral density
+    freqs, psd = welch(data, sfreq, nperseg=sfreq*EPOCH_DURATION_SEC)
+    
+    # Find frequencies within the band
+    idx_band = np.logical_and(freqs >= band_low, freqs <= band_high)
+    
+    # Calculate average power in the band (using Simpson's rule for integration)
+    avg_power = np.trapz(psd[idx_band], freqs[idx_band])
+    return avg_power
+
+@st.cache_data
+def extract_features_from_epoch(epoch_data, sfreq, channel_names):
+    """
+    Extracts features from a single epoch (window) of data.
+    Input: epoch_data (channels, timepoints)
+    """
+    if not eeg_libs_available:
+        raise ImportError("MNE/SciPy libraries are not available.")
+        
+    features = {}
+    for i, ch_name in enumerate(channel_names):
+        ch_data = epoch_data[i, :]
+        
+        # 1. Time-domain (Statistical) features
+        features[f'{ch_name}_mean'] = np.mean(ch_data)
+        features[f'{ch_name}_var'] = np.var(ch_data)
+        features[f'{ch_name}_skew'] = skew(ch_data)
+        features[f'{ch_name}_kurt'] = kurtosis(ch_data)
+        
+        # 2. Frequency-domain (Band Power) features
+        for band_name, band_freqs in EEG_BANDS.items():
+            power = get_band_power(ch_data, sfreq, band_freqs)
+            features[f'{ch_name}_{band_name}'] = power
+            
+    return features
+
+def process_edf_to_dataframe(file_path, subject_id="Uploaded_Subject", session_id="Uploaded_Session"):
+    """
+    Loads an EDF file, extracts features from its epochs, and returns a DataFrame.
+    """
+    if not eeg_libs_available:
+        st.error("Cannot process EDF: MNE/SciPy libraries not installed.")
+        return None
+
+    # Suppress MNE info messages
+    mne.set_log_level('WARNING')
+    
+    try:
+        # Load the EDF file
+        raw = mne.io.read_raw_edf(file_path, preload=True)
+        
+        # Select only EEG channels
+        raw.pick_types(eeg=True)
+        
+        try:
+            raw.set_montage('standard_1020', on_missing='ignore')
+        except ValueError:
+            print("Could not set montage. Using raw channel names.")
+
+        channel_names = raw.ch_names
+        sfreq = raw.info['sfreq']
+        
+        # Create fixed-length epochs (windows)
+        epochs = mne.make_fixed_length_epochs(raw, duration=EPOCH_DURATION_SEC, 
+                                            overlap=0, preload=True)
+        
+        all_epoch_features = []
+        
+        # Iterate over each epoch and extract features
+        for epoch_data in epochs.get_data():
+            # epoch_data shape is (n_channels, n_times)
+            features = extract_features_from_epoch(epoch_data, sfreq, channel_names)
+            all_epoch_features.append(features)
+        
+        if not all_epoch_features:
+            st.error("Error: No epochs were created from the EDF file. The file might be too short or empty.")
+            return None
+
+        # Convert list of feature dicts to a DataFrame
+        features_df = pd.DataFrame(all_epoch_features)
+        
+        # Add placeholder Subject and Session columns (as expected by train_eeg_model.py)
+        features_df['Subject'] = subject_id
+        features_df['Session'] = session_id
+        
+        # Re-order columns
+        cols_to_move = ['Subject', 'Session']
+        features_df = features_df[cols_to_move + 
+                                  [c for c in features_df.columns if c not in cols_to_move]]
+        
+        print(f"Successfully extracted {len(features_df)} samples (epochs) from EDF.")
+        return features_df
+
+    except Exception as e:
+        st.error(f"An error occurred while processing the EDF file: {e}")
+        return None
+# --- End EEG Helper Functions ---
 
 
 
@@ -376,7 +506,39 @@ def load_brain_tumor_model():
     except Exception as e:
         st.error(f"❌ An error occurred while loading the Brain Tumor model: {e}")
         return None, None, None, None, None
+    
 
+# ... (after load_brain_tumor_model function)
+
+@st.cache_resource
+def load_eeg_model():
+    """Loads the saved EEG pipeline (model, imputer, encoder, features)."""
+    # This model was trained with standard scikit-learn,
+    # so it doesn't need the sys.modules-patching that other models do.
+    model_path = os.path.join('EEG', 'rf_eeg_pipeline.pkl')
+    try:
+        with open(model_path, 'rb') as file:
+            eeg_pipeline = pickle.load(file)
+        
+        # Unpack the dictionary
+        eeg_model = eeg_pipeline['model']
+        eeg_le = eeg_pipeline['label_encoder']
+        eeg_imputer = eeg_pipeline['imputer']
+        eeg_feature_names = eeg_pipeline['feature_names']
+        eeg_class_names = eeg_pipeline['class_names']
+        
+        print("EEG (Random Forest) pipeline loaded successfully")
+        return eeg_model, eeg_le, eeg_imputer, eeg_feature_names, eeg_class_names
+    except FileNotFoundError:
+        st.error(f"❌ ERROR: The file '{model_path}' was not found. Please place 'rf_eeg_pipeline.pkl' in the 'EEG' folder.")
+        return None, None, None, None, None
+    except Exception as e:
+        st.error(f"❌ An error occurred while loading the EEG model: {e}")
+        return None, None, None, None, None
+
+# ... (rest of your model loading functions) ...
+bt_model, bt_le, bt_scaler, bt_pca, bt_class_names = load_brain_tumor_model()
+eeg_model, eeg_le, eeg_imputer, eeg_feature_names, eeg_class_names = load_eeg_model()
 model, scaler, feature_names = load_body_fat_model()
 heart_model_pipeline = load_heart_attack_model()      
 maternal_model_pipeline = load_maternal_health_model()
@@ -384,7 +546,7 @@ obesity_model = obesity_model_loader()
 gallstone_model = gallstone_model_loader()
 kidney_model_pipeline = load_kidney_disease_model()
 diabetes_model_pipeline = load_diabetes_model()
-bt_model, bt_le, bt_scaler, bt_pca, bt_class_names = load_brain_tumor_model()
+
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
     page_title="Health Buddy",
@@ -887,6 +1049,11 @@ st.markdown(
             padding: 1.5rem;
         }
 
+        /* Hide sidebar collapse button */
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none;
+        }
+
         .form-section {
             padding: 1rem;
         }
@@ -915,6 +1082,7 @@ with st.sidebar:
             "Kidney Disease Predictor",
             "Brain Tumor Predictor",
             "Breast Cancer Predictor",
+            "EEG Predictor"
         ],
         label_visibility="collapsed"
     )
@@ -2336,3 +2504,90 @@ elif app_mode == "Brain Tumor Predictor":
                     # 7. Clean up (delete) the temporary file
                     if temp_image_path and os.path.exists(temp_image_path):
                         os.remove(temp_image_path)
+
+# ... (after the "Brain Tumor Predictor" block, near line 2038)
+
+# --- EEG PREDICTOR PAGE ---
+elif app_mode == "EEG Predictor":
+    st.markdown("# EEG Signal Predictor (EDF)")
+    st.markdown("Our **Random Forest** model will analyze an EEG scan to predict the session type (e.g., Background vs. Task).")
+    
+    # Check if MNE/SciPy are installed
+    if not eeg_libs_available:
+        st.error("❌ **Missing Libraries:** This predictor is disabled. Please install `mne` and `scipy` in your environment to use this feature.")
+    else:
+        # 1. Create the file uploader for EDF
+        uploaded_file = st.file_uploader(
+            "Upload an EEG Scan (.edf file)...", 
+            type=["edf"]
+        )
+        
+        temp_edf_path = None
+        
+        if uploaded_file is not None:
+            # 2. Save the uploaded EDF to a temporary file
+            # This is necessary because process_edf_to_dataframe expects a file path
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".edf") as tmp:
+                tmp.write(uploaded_file.getvalue())
+                temp_edf_path = tmp.name
+            
+            st.info(f"✅ EDF file '{uploaded_file.name}' uploaded successfully. Ready to analyze.")
+            
+            # 3. Create the prediction button
+            if st.button("Analyze EEG Scan", use_container_width=True):
+                # Check if all models loaded
+                if not all([eeg_model, eeg_le, eeg_imputer, eeg_feature_names, eeg_class_names]):
+                    missing = [name for name, var in [("eeg_model", eeg_model), ("eeg_le", eeg_le), ("eeg_imputer", eeg_imputer), ("eeg_feature_names", eeg_feature_names), ("eeg_class_names", eeg_class_names)] if not var]
+                    st.error(f"❌ **Model Error:** The following EEG prediction pipeline components are not loaded: {', '.join(missing)}. Check server logs.")
+                else:
+                    try:
+                        with st.spinner("Processing EDF file and extracting features... This may take a moment."):
+                            # 4. Process EDF -> DataFrame
+                            # This function (defined above) runs the full feature extraction
+                            features_df = process_edf_to_dataframe(temp_edf_path)
+                        
+                        if features_df is not None:
+                            with st.spinner("Running prediction pipeline..."):
+                                # 5. Preprocess DataFrame (align, impute)
+                                # This logic is from your predict_eeg.py script
+                                
+                                # Align columns to match training data
+                                # Fills missing with NaN, drops extras (like 'Subject', 'Session')
+                                data_for_processing = features_df.reindex(columns=eeg_feature_names, fill_value=np.nan)
+                                
+                                # Apply the Imputer
+                                if eeg_imputer:
+                                    data_to_predict = eeg_imputer.transform(data_for_processing)
+                                else:
+                                    # Fallback if no imputer was saved
+                                    st.warning("No imputer found. Filling missing values with 0.")
+                                    data_to_predict = data_for_processing.fillna(0).values
+                                
+                                # 6. Predict
+                                predictions_idx = eeg_model.predict(data_to_predict)
+                                predictions_names = eeg_le.inverse_transform(predictions_idx)
+                                
+                                # 7. Display Results
+                                st.markdown("### 📋 Analysis Results")
+                                
+                                # Create a summary (like in predict_eeg.py)
+                                results_summary = pd.Series(predictions_names).value_counts()
+                                most_common_prediction = results_summary.idxmax()
+                                
+                                st.success(f"**Overall Prediction (Most Common): {most_common_prediction}**")
+                                
+                                st.markdown(f"#### Prediction Summary (per {EPOCH_DURATION_SEC}-second epoch):")
+                                st.dataframe(results_summary.to_frame(name="Epoch Count"))
+                                
+                                st.info(f"This prediction is based on classifying {len(predictions_names)} different {EPOCH_DURATION_SEC}-second epochs from the EDF file. The 'Overall Prediction' is the most frequent class found.")
+                        
+                    except Exception as e:
+                        st.error(f"❌ An error occurred during prediction: {e}")
+                    
+                    finally:
+                        # 8. Clean up (delete) the temporary file
+                        if temp_edf_path and os.path.exists(temp_edf_path):
+                            os.remove(temp_edf_path)
+                            print(f"Cleaned up temp file: {temp_edf_path}")
+
+# --- (This is the start of the "Breast Cancer Predictor" block) ---

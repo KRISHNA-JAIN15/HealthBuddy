@@ -27,7 +27,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 
 # ❗ **ACTION REQUIRED**: Update this path to the *single* folder containing your data.
 # e.g., r'C:\Users\jaink\OneDrive\Desktop\ML_Project\EEG'
-DATASET_DIR = r'C:\Users\Research PC\Desktop\ML\EEG' 
+DATASET_DIR = r'/home/lightshadow/pseudoD/Sem 5/HealthBuddy/EEG' 
 
 # --- 3. Helper: Find Data Files ---
 def find_data_files(folder_path):
