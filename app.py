@@ -3028,7 +3028,7 @@ elif app_mode == "Brain Tumor Predictor":
 
 elif app_mode == "EEG Predictor":
     st.markdown("EEG Predictor")
-    st.markdown("Our **Random Forest** model will analyze an EEG scan to predict the session type (e.g., Background vs. Task).")
+    st.markdown("Our **Random Forest** model will analyze an EEG scan to predict the session type (e.g., no stress vs. stress).")
     
     # Check if MNE/SciPy are installed
     if not eeg_libs_available:
@@ -3080,6 +3080,9 @@ elif app_mode == "EEG Predictor":
                                 # 6. Predict
                                 predictions_idx = eeg_model.predict(data_to_predict)
                                 predictions_names = eeg_le.inverse_transform(predictions_idx)
+                                
+                                # Map class names
+                                predictions_names = ['stress' if name == 'Task' else 'no stress' for name in predictions_names]
                                 
                                 # 7. Display Results
                                 st.markdown("### 📋 Analysis Results")
