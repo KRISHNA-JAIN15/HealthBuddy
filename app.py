@@ -14,7 +14,7 @@ from sklearn.impute import SimpleImputer
 try:
     import mne
     from scipy.signal import welch
-    from scipy.stats import skew, kurtosis
+    from scipy.stats import skew, kurtosis, entropy, gmean
     eeg_libs_available = True
     print("✅ MNE and SciPy imported successfully for EEG.")
 except Exception as e:
@@ -23,6 +23,8 @@ except Exception as e:
     welch = None
     skew = None
     kurtosis = None
+    entropy = None
+    gmean = None
     print(f"❌ MNE/SciPy import failed: {e}. EEG predictor will be disabled.")
 
 
@@ -145,25 +147,65 @@ def get_band_power(data, sfreq, band):
 def extract_features_from_epoch(epoch_data, sfreq, channel_names):
     """
     Extracts features from a single epoch (window) of data.
-    Input: epoch_data (channels, timepoints)
+    Matches the features used in training: Hjorth parameters, band powers (absolute and relative), spectral features.
     """
     if not eeg_libs_available:
         raise ImportError("MNE/SciPy libraries are not available.")
         
     features = {}
     for i, ch_name in enumerate(channel_names):
+        # Channel names should already include "EEG " prefix if present
+        ch_name_full = ch_name
         ch_data = epoch_data[i, :]
         
-        # 1. Time-domain (Statistical) features
-        features[f'{ch_name}_mean'] = np.mean(ch_data)
-        features[f'{ch_name}_var'] = np.var(ch_data)
-        features[f'{ch_name}_skew'] = skew(ch_data)
-        features[f'{ch_name}_kurt'] = kurtosis(ch_data)
+        # 1. Hjorth parameters
+        activity = np.var(ch_data)
+        first_derivative = np.diff(ch_data)
+        mobility = np.sqrt(np.var(first_derivative) / activity) if activity > 0 else 0
+        second_derivative = np.diff(first_derivative)
+        mobility_derivative = np.sqrt(np.var(second_derivative) / np.var(first_derivative)) if np.var(first_derivative) > 0 else 0
+        complexity = mobility_derivative / mobility if mobility > 0 else 0
         
-        # 2. Frequency-domain (Band Power) features
+        features[f'{ch_name_full}_hjorth_activity'] = activity
+        features[f'{ch_name_full}_hjorth_mobility'] = mobility
+        features[f'{ch_name_full}_hjorth_complexity'] = complexity
+        
+        # 2. Band powers (absolute and relative)
+        # Get PSD for relative powers
+        freqs_psd, psd = welch(ch_data, sfreq, nperseg=sfreq*EPOCH_DURATION_SEC)
+        total_psd_power = np.sum(psd)
+        
+        band_powers = {}
         for band_name, band_freqs in EEG_BANDS.items():
             power = get_band_power(ch_data, sfreq, band_freqs)
-            features[f'{ch_name}_{band_name}'] = power
+            band_powers[band_name] = power
+        
+        for band_name, power in band_powers.items():
+            features[f'{ch_name_full}_{band_name.lower()}_power'] = power
+            features[f'{ch_name_full}_{band_name.lower()}_rel_power'] = power / total_psd_power if total_psd_power > 0 else 0
+        
+        # 3. Spectral features
+        freqs, psd = welch(ch_data, sfreq, nperseg=sfreq*EPOCH_DURATION_SEC)
+        psd_total = np.sum(psd)
+        
+        if psd_total > 0:
+            psd_norm = psd / psd_total
+            spectral_entropy = entropy(psd_norm)
+            spectral_centroid = np.sum(freqs * psd) / psd_total
+            spectral_flatness = gmean(psd + 1e-10) / (np.mean(psd) + 1e-10)
+            cumsum_psd = np.cumsum(psd)
+            rolloff_idx = np.where(cumsum_psd >= 0.85 * psd_total)[0]
+            spectral_rolloff = freqs[rolloff_idx[0]] if len(rolloff_idx) > 0 else 0
+        else:
+            spectral_entropy = 0
+            spectral_centroid = 0
+            spectral_flatness = 0
+            spectral_rolloff = 0
+        
+        features[f'{ch_name_full}_spectral_entropy'] = spectral_entropy
+        features[f'{ch_name_full}_spectral_centroid'] = spectral_centroid
+        features[f'{ch_name_full}_spectral_flatness'] = spectral_flatness
+        features[f'{ch_name_full}_spectral_rolloff'] = spectral_rolloff
             
     return features
 
@@ -182,6 +224,15 @@ def process_edf_to_dataframe(file_path, subject_id="Uploaded_Subject", session_i
         # Load the EDF file
         raw = mne.io.read_raw_edf(file_path, preload=True)
         
+        # Apply filters to match training data preprocessing
+        # Notch filter to remove 50 Hz noise
+        raw.notch_filter(freqs=50, method='fir', fir_design='firwin')
+        # Bandpass filter 1-64 Hz
+        raw.filter(l_freq=1.0, h_freq=64.0, method='fir', fir_design='firwin')
+        
+        # Downsample to 128 Hz to match training data
+        raw.resample(sfreq=128)
+        
         # Select only EEG channels
         raw.pick_types(eeg=True)
         
@@ -191,7 +242,7 @@ def process_edf_to_dataframe(file_path, subject_id="Uploaded_Subject", session_i
             print("Could not set montage. Using raw channel names.")
 
         channel_names = raw.ch_names
-        sfreq = raw.info['sfreq']
+        sfreq = raw.info['sfreq']  # Should be 128 now
         
         # Create fixed-length epochs (windows)
         epochs = mne.make_fixed_length_epochs(raw, duration=EPOCH_DURATION_SEC, 
@@ -574,19 +625,45 @@ st.markdown(
 
     /* Main app container */
     [data-testid="stAppViewContainer"] {
-        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
+        background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 25%, #e2e8f0 50%, #cbd5e1 75%, #94a3b8 100%);
         min-height: 100vh;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        background-attachment: fixed;
     }
 
     /* Hide Streamlit branding */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+
+    /* Keep header visible for sidebar toggle */
+    /* header {visibility: hidden;} */
+
+    /* Style the header to blend with the design */
+    header {
+        background: transparent !important;
+        border-bottom: none !important;
+        box-shadow: none !important;
+    }
+
+    header .css-1avcm0n {  /* Streamlit header content */
+        background: transparent !important;
+    }
+
+    /* Ensure sidebar toggle button is visible and accessible */
+    [data-testid="stSidebarCollapsedControl"] {
+        opacity: 1 !important;
+        visibility: visible !important;
+        display: block !important;
+        z-index: 1000 !important;
+    }
+
+    [data-testid="stSidebarCollapsedControl"]:hover {
+        opacity: 0.8 !important;
+    }
 
     /* Sidebar styling - Modern glassmorphism effect */
     [data-testid="stSidebar"] {
-        background: linear-gradient(145deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.95) 100%);
+        background: linear-gradient(145deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.95) 50%, rgba(241,245,249,0.95) 100%);
         backdrop-filter: blur(20px);
         border-right: 1px solid rgba(148,163,184,0.1);
         box-shadow: 4px 0 24px rgba(0,0,0,0.08);
@@ -655,7 +732,7 @@ st.markdown(
 
     /* Hero section - Dramatic and modern */
     .hero-container {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 25%, #f093fb 50%, #f5576c 75%, #4facfe 100%);
         border-radius: 24px;
         color: white;
         text-align: center;
@@ -707,7 +784,7 @@ st.markdown(
 
     /* Content cards - Clean and professional */
     .content-card {
-        background: rgba(255,255,255,0.95);
+        background: linear-gradient(145deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.9) 100%);
         backdrop-filter: blur(20px);
         border-radius: 20px;
         padding: 2.5rem;
@@ -715,6 +792,27 @@ st.markdown(
         border: 1px solid rgba(148,163,184,0.1);
         box-shadow: 0 8px 32px rgba(0,0,0,0.08);
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        overflow: hidden;
+        max-width: 1200px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .content-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 3px;
+        background: linear-gradient(90deg, #3b82f6, #8b5cf6, #06b6d4);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    }
+
+    .content-card:hover::before {
+        opacity: 1;
     }
 
     .content-card:hover {
@@ -724,13 +822,28 @@ st.markdown(
 
     /* Form containers - Modern glass effect */
     [data-testid="stForm"] {
-        background: rgba(255,255,255,0.95);
+        background: linear-gradient(145deg, rgba(255,255,255,0.95) 0%, rgba(248,250,252,0.9) 100%);
         backdrop-filter: blur(20px);
         border-radius: 24px;
         padding: 3rem;
         border: 1px solid rgba(148,163,184,0.1);
         box-shadow: 0 12px 40px rgba(0,0,0,0.1);
         margin-bottom: 2rem;
+        position: relative;
+        overflow: hidden;
+        max-width: 800px;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    [data-testid="stForm"]::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #3b82f6, #8b5cf6, #06b6d4, #10b981);
     }
 
     /* Form sections */
@@ -740,6 +853,7 @@ st.markdown(
         padding: 2rem;
         margin-bottom: 2rem;
         border: 1px solid rgba(148,163,184,0.1);
+        max-width: 100%;
     }
 
     .form-section h3 {
@@ -760,39 +874,35 @@ st.markdown(
         font-size: 1rem;
         font-weight: 500;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        background: white;
+        background: rgba(255,255,255,0.9);
         color: #1e293b;
+        backdrop-filter: blur(10px);
     }
 
     /* Specific styling for select dropdowns to ensure contrast */
     .stSelectbox select {
         border-radius: 12px;
-        border: 2px solid #cbd5e1;
+        border: 2px solid #e2e8f0;
         padding: 0.875rem 1rem;
         font-size: 1rem;
         font-weight: 500;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        background: #374151 !important;
-        color: white !important;
+        background: rgba(255,255,255,0.9) !important;
+        color: #1e293b !important;
+        backdrop-filter: blur(10px);
     }
 
     .stSelectbox select option {
-        background: #374151 !important;
-        color: white !important;
-    }
-
-    .stNumberInput input:focus, .stTextInput input:focus {
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
-        background: white;
-        outline: none;
+        background: white !important;
+        color: #1e293b !important;
     }
 
     .stSelectbox select:focus {
         border-color: #3b82f6;
         box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
-        background: #374151;
+        background: white !important;
         outline: none;
+        transform: translateY(-1px);
     }
 
     /* Labels - Clean typography */
@@ -806,23 +916,26 @@ st.markdown(
 
     /* Submit button - Professional single color */
     [data-testid="stFormSubmitButton"] button {
-        background: #3b82f6;
-        color: black !important;
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        color: white !important;
         font-weight: 700;
         width: 100%;
-        font-size: 1.25rem;
+        max-width: 300px;
+        font-size: 1.1rem;
         border-radius: 16px;
         border: none;
-        padding: 1.25rem 2rem;
+        padding: 1rem 2rem;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: 0 4px 15px rgba(59,130,246,0.3);
         text-transform: uppercase;
         letter-spacing: 1px;
         font-family: 'Poppins', sans-serif;
+        margin: 1rem auto;
+        display: block;
     }
 
     [data-testid="stFormSubmitButton"] button:hover {
-        background: #2563eb;
+        background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
         transform: translateY(-2px);
         box-shadow: 0 8px 25px rgba(59,130,246,0.4);
     }
@@ -831,18 +944,22 @@ st.markdown(
     .stButton button {
         border-radius: 12px;
         font-weight: 600;
-        padding: 0.75rem 3rem;
+        padding: 0.75rem 2rem;
         transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         border: none;
-        background: #10b981;
-        color: black !important;
-        box-shadow: 0 4px 15px rgba(16,185,129,0.3);
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        color: white !important;
+        box-shadow: 0 4px 15px rgba(59,130,246,0.3);
+        min-width: fit-content;
+        white-space: nowrap;
+        margin: 0.25rem;
+        display: inline-block;
     }
 
     .stButton button:hover {
-        background: #059669;
+        background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
         transform: translateY(-2px);
-        box-shadow: 0 8px 25px rgba(16,185,129,0.4);
+        box-shadow: 0 8px 25px rgba(59,130,246,0.4);
     }
 
     /* Alert boxes - Modern design */
@@ -963,14 +1080,59 @@ st.markdown(
 
     /* General text improvements */
     p, li, span, div {
-        color: #4b5563 !important;
+        color: #374151 !important;
         line-height: 1.7;
         font-weight: 400;
     }
 
     /* Markdown content */
     .stMarkdown {
-        color: #4b5563 !important;
+        color: #374151 !important;
+    }
+
+    /* Ensure all text has proper contrast */
+    .stText, .stMarkdown p, .stMarkdown li, .stMarkdown span {
+        color: #374151 !important;
+    }
+
+    /* Fix any grey text on dark backgrounds */
+    .stSelectbox select {
+        background: rgba(255,255,255,0.9) !important;
+        color: #1e293b !important;
+    }
+
+    .stSelectbox select option {
+        background: white !important;
+        color: #1e293b !important;
+    }
+
+    /* Ensure all form text is visible */
+    .stNumberInput label, .stTextInput label, .stSelectbox label {
+        color: #1e293b !important;
+        font-weight: 600;
+    }
+
+    /* Radio button text in forms */
+    [data-baseweb="radio"] span {
+        color: #1e293b !important;
+    }
+    .stSelectbox label, .stNumberInput label, .stTextInput label {
+        color: #374151 !important;
+        font-weight: 600;
+    }
+
+    /* Ensure radio button labels are visible */
+    [data-testid="stSidebar"] label[data-baseweb="radio"] span {
+        color: #1e293b !important;
+    }
+
+    /* Fix any potential contrast issues in metrics */
+    [data-testid="stMetric"] .metric-label {
+        color: #64748b !important;
+    }
+
+    [data-testid="stMetric"] .metric-value {
+        color: #1e293b !important;
     }
 
     /* Tables - Modern styling */
@@ -1031,11 +1193,63 @@ st.markdown(
         }
     }
 
+    @keyframes slideInLeft {
+        from {
+            opacity: 0;
+            transform: translateX(-30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+
+    @keyframes slideInRight {
+        from {
+            opacity: 0;
+            transform: translateX(30px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(0);
+        }
+    }
+
     .fade-in-up {
         animation: fadeInUp 0.6s ease-out;
     }
 
+    .slide-in-left {
+        animation: slideInLeft 0.6s ease-out;
+    }
+
+    .slide-in-right {
+        animation: slideInRight 0.6s ease-out;
+    }
+
     /* Responsive design improvements */
+    @media (min-width: 1400px) {
+        [data-testid="stForm"] {
+            max-width: 1000px;
+        }
+
+        .content-card {
+            max-width: 1400px;
+        }
+    }
+
+    @media (max-width: 1200px) {
+        [data-testid="stForm"] {
+            max-width: 90%;
+            padding: 2.5rem;
+        }
+
+        .content-card {
+            max-width: 95%;
+            padding: 2rem;
+        }
+    }
+
     @media (max-width: 768px) {
         .hero-container h1 {
             font-size: 2.5rem;
@@ -1043,25 +1257,328 @@ st.markdown(
 
         .hero-container {
             padding: 2rem 1.5rem;
+            margin: 1rem;
         }
 
         [data-testid="stSidebar"] {
             border-radius: 0 16px 16px 0;
+            padding: 1rem;
         }
 
         [data-testid="stForm"] {
             padding: 1.5rem;
-        }
-
-        /* Hide sidebar collapse button */
-        [data-testid="stSidebarCollapsedControl"] {
-            display: none;
+            margin: 1rem;
+            max-width: 95%;
         }
 
         .form-section {
             padding: 1rem;
         }
+
+        .home-grid {
+            grid-template-columns: 1fr;
+            gap: 1rem;
+            margin: 1rem;
+        }
+
+        .home-card {
+            padding: 1.5rem;
+        }
+
+        .content-card {
+            padding: 1.5rem;
+            margin: 1rem;
+            max-width: 100%;
+        }
+
+        .stButton button {
+            padding: 0.75rem 1.5rem;
+            font-size: 0.9rem;
+            width: auto;
+            min-width: 120px;
+            margin: 0.25rem;
+            display: inline-block;
+        }
+
+        /* Mobile button layout */
+        .stButton {
+            text-align: center;
+            margin: 0.25rem 0;
+        }
+
+        [data-testid="stMetric"] {
+            padding: 1rem;
+        }
+
+        /* Stack columns vertically on mobile */
+        [data-testid="column"] {
+            padding: 0 0.5rem;
+        }
     }
+
+    @media (max-width: 480px) {
+        .hero-container h1 {
+            font-size: 2rem;
+        }
+
+        .hero-container h3 {
+            font-size: 1.2rem;
+        }
+
+        [data-testid="stSidebar"] h1 {
+            font-size: 1.5rem;
+        }
+
+        .stNumberInput input, .stTextInput input, .stSelectbox select {
+            padding: 0.75rem;
+            font-size: 0.9rem;
+        }
+
+        [data-testid="stForm"] {
+            padding: 1rem;
+            border-radius: 16px;
+        }
+
+        .content-card {
+            padding: 1rem;
+            border-radius: 16px;
+        }
+
+        .stButton button {
+            padding: 0.625rem 1rem;
+            font-size: 0.85rem;
+        }
+    }
+
+    /* Home page grid layout */
+    .home-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+        gap: 2rem;
+        margin: 2rem 0;
+    }
+
+    .home-card {
+        background: rgba(255,255,255,0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 20px;
+        padding: 2rem;
+        border: 1px solid rgba(148,163,184,0.1);
+        box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .home-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 4px;
+        background: linear-gradient(90deg, #3b82f6, #8b5cf6, #06b6d4);
+    }
+
+    .home-card:hover {
+        transform: translateY(-8px);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+    }
+
+    .home-card h3 {
+        color: #1e293b !important;
+        font-family: 'Poppins', sans-serif;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        font-size: 1.4rem;
+    }
+
+    .home-card p {
+        color: #64748b !important;
+        line-height: 1.6;
+        margin-bottom: 1rem;
+    }
+
+    .home-card ul {
+        color: #64748b !important;
+        padding-left: 1.5rem;
+    }
+
+    .home-card li {
+        margin-bottom: 0.5rem;
+    }
+
+    /* Enhanced button styling */
+    .stButton > button {
+        background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        padding: 0.75rem 2rem;
+        font-weight: 600;
+        font-size: 1rem;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: 0 4px 15px rgba(59,130,246,0.3);
+        cursor: pointer;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(59,130,246,0.4);
+    }
+
+    .stButton > button:active {
+        transform: translateY(0);
+    }
+
+    /* Success and error message styling */
+    .stSuccess, .stError {
+        border-radius: 12px;
+        padding: 1rem;
+        margin: 1rem 0;
+        border: none;
+    }
+
+    .stSuccess {
+        background: linear-gradient(135deg, rgba(34,197,94,0.1) 0%, rgba(22,163,74,0.1) 100%);
+        border-left: 4px solid #22c55e;
+    }
+
+    .stError {
+        background: linear-gradient(135deg, rgba(239,68,68,0.1) 0%, rgba(220,38,38,0.1) 100%);
+        border-left: 4px solid #ef4444;
+    }
+
+    /* Metric cards */
+    [data-testid="stMetric"] {
+        background: rgba(255,255,255,0.9);
+        backdrop-filter: blur(10px);
+        border-radius: 16px;
+        padding: 1.5rem;
+        border: 1px solid rgba(148,163,184,0.1);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        transition: all 0.3s ease;
+    }
+
+    [data-testid="stMetric"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    }
+
+    [data-testid="stMetric"] .metric-label {
+        color: #64748b !important;
+        font-size: 0.875rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    [data-testid="stMetric"] .metric-value {
+        color: #1e293b !important;
+        font-size: 2rem;
+        font-weight: 700;
+        margin: 0.5rem 0;
+    }
+
+    [data-testid="stMetric"] .metric-delta {
+        color: #10b981 !important;
+        font-size: 0.875rem;
+        font-weight: 600;
+    }
+
+    /* File uploader styling */
+    [data-testid="stFileUploader"] {
+        background: rgba(255,255,255,0.9);
+        border: 2px dashed #cbd5e1;
+        border-radius: 12px;
+        padding: 2rem;
+        transition: all 0.3s ease;
+    }
+
+    [data-testid="stFileUploader"]:hover {
+        border-color: #3b82f6;
+        background: rgba(59,130,246,0.05);
+    }
+
+    /* Enhanced columns */
+    [data-testid="column"] {
+        padding: 0 1rem;
+        margin-bottom: 1rem;
+    }
+
+    /* Button columns - prevent overlapping */
+    [data-testid="column"] .stButton {
+        margin: 0.5rem 0;
+        width: 100%;
+    }
+
+    [data-testid="column"] .stButton button {
+        width: 100%;
+        max-width: none;
+    }
+
+    /* Button containers - prevent overlapping */
+    .stButton {
+        margin: 0.5rem 0;
+        display: block;
+    }
+
+    /* Button groups - better spacing */
+    .stButton + .stButton {
+        margin-top: 0.5rem;
+    }
+
+    /* Sample buttons container */
+    .sample-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        justify-content: center;
+        margin: 1rem 0;
+    }
+
+    .sample-buttons .stButton {
+        flex: 0 0 auto;
+        margin: 0;
+    }
+
+    /* Subtle texture overlay for depth */
+    .texture-overlay {
+        position: relative;
+    }
+
+    .texture-overlay::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="25" cy="25" r="1" fill="rgba(0,0,0,0.03)"/><circle cx="75" cy="75" r="1" fill="rgba(0,0,0,0.03)"/><circle cx="50" cy="10" r="0.5" fill="rgba(0,0,0,0.02)"/><circle cx="10" cy="50" r="0.5" fill="rgba(0,0,0,0.02)"/><circle cx="90" cy="30" r="0.5" fill="rgba(0,0,0,0.02)"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+        pointer-events: none;
+        border-radius: inherit;
+    }
+
+    /* Apply texture to main cards */
+    .content-card, .home-card, [data-testid="stForm"] {
+        position: relative;
+    }
+
+    .content-card::after, .home-card::after, [data-testid="stForm"]::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="25" cy="25" r="1" fill="rgba(0,0,0,0.03)"/><circle cx="75" cy="75" r="1" fill="rgba(0,0,0,0.03)"/><circle cx="50" cy="10" r="0.5" fill="rgba(0,0,0,0.02)"/><circle cx="10" cy="50" r="0.5" fill="rgba(0,0,0,0.02)"/><circle cx="90" cy="30" r="0.5" fill="rgba(0,0,0,0.02)"/></pattern></defs><rect width="100" height="100" fill="url(%23grain)"/></svg>');
+        pointer-events: none;
+        border-radius: inherit;
+        opacity: 0.5;
+    }
+
 </style>
     """,
     unsafe_allow_html=True,
@@ -1085,7 +1602,7 @@ with st.sidebar:
             "Diabetes Predictor",
             "Kidney Disease Predictor",
             "Brain Tumor Predictor",
-            "Breast Cancer Predictor",
+          
             "EEG Predictor"
         ],
         label_visibility="collapsed"
@@ -1583,8 +2100,6 @@ elif app_mode == "Maternal Health Predictor":
             
             except Exception as e:
                 st.error(f"❌ An error occurred during prediction: {e}")
-
-
 
 
 
@@ -2141,7 +2656,6 @@ elif app_mode == "Diabetes Predictor":
         # --- IMPORTANT: These must be strings or numbers as defined in your training script ---
         col1, col2, col3 = st.columns(3)
         with col1:
-            # Your training script treated these as numeric, so we use numbers
             sg = st.selectbox("Specific Gravity (sg)", (1.005, 1.010, 1.015, 1.020, 1.025), index=(0 if st.session_state.get('db_sg',1.015)==1.005 else (1 if st.session_state.get('db_sg',1.015)==1.010 else (2 if st.session_state.get('db_sg',1.015)==1.015 else (3 if st.session_state.get('db_sg',1.015)==1.020 else 4)))), key='db_sg')
         with col2:
             al = st.selectbox("Albumin (al)", (0.0, 1.0, 2.0, 3.0, 4.0, 5.0), index=int(st.session_state.get('db_al',0.0)), key='db_al')
